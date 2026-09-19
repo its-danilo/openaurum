@@ -1,0 +1,3 @@
+# OpenAurum: lets the logged-in user talk to the Pichau Aurum V60 lighting
+# interface (hidraw, vendor 36ae product fe9c). Nothing else is opened.
+KERNEL=="hidraw*", ATTRS{idVendor}=="36ae", ATTRS{idProduct}=="fe9c", TAG+="uaccess"

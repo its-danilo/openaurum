@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <!-- OpenAurum: Aurum V60 RGB keyboard icon -->
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#4a5060"/>
+      <stop offset="1" stop-color="#2a2e38"/>
+    </linearGradient>
+    <linearGradient id="rgb" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#ff3b5c"/>
+      <stop offset="0.2" stop-color="#ffb000"/>
+      <stop offset="0.4" stop-color="#6bff4a"/>
+      <stop offset="0.6" stop-color="#2ee6ff"/>
+      <stop offset="0.8" stop-color="#4a6bff"/>
+      <stop offset="1" stop-color="#e04aff"/>
+    </linearGradient>
+    <filter id="glow" x="-20%" y="-40%" width="140%" height="180%">
+      <feGaussianBlur stdDeviation="7"/>
+    </filter>
+  </defs>
+
+  <rect x="18" y="22" width="220" height="220" rx="46" fill="#000" opacity="0.25"/>
+  <rect x="18" y="16" width="220" height="220" rx="46" fill="url(#tile)"/>
+  <rect x="19" y="17" width="218" height="218" rx="45" fill="none" stroke="#fff" stroke-opacity="0.12" stroke-width="2"/>
+
+  <!-- underglow -->
+  <rect x="44" y="84" width="168" height="92" rx="14" fill="url(#rgb)" opacity="0.55" filter="url(#glow)"/>
+  <!-- case -->
+  <rect x="38" y="78" width="180" height="104" rx="14" fill="#14171d" stroke="#5a6173" stroke-width="3"/>
+
+  <!-- keys lit by the rainbow -->
+  <g fill="url(#rgb)">
+    <path d="M48 88h18v18h-18zM70 88h18v18h-18zM92 88h18v18h-18zM114 88h18v18h-18zM136 88h18v18h-18zM158 88h18v18h-18zM180 88h28v18h-28z"/>
+    <path d="M48 110h26v18h-26zM78 110h18v18h-18zM100 110h18v18h-18zM122 110h18v18h-18zM144 110h18v18h-18zM166 110h18v18h-18zM188 110h20v40h-20z"/>
+    <path d="M48 132h30v18h-30zM82 132h18v18h-18zM104 132h18v18h-18zM126 132h18v18h-18zM148 132h18v18h-18zM170 132h14v18h-14z"/>
+    <path d="M48 154h22v18h-22zM74 154h26v18h-26zM104 154h60v18h-60zM168 154h18v18h-18zM190 154h18v18h-18z"/>
+  </g>
+  <rect x="38" y="78" width="180" height="104" rx="14" fill="none" stroke="#fff" stroke-opacity="0.08" stroke-width="1"/>
+</svg>

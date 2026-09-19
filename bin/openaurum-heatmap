@@ -1,0 +1,147 @@
+#!/usr/bin/env python3
+"""OpenAurum: typing heatmap of the Pichau Aurum V60 (the "Mapa de calor" overlay).
+
+Counts key presses per key, nothing else: no order, no text, no timing. Only
+the Aurum's own input devices are read (the laptop keyboard is not). Counts go
+to ~/.local/state/openaurum/heat.json every 10 s and on stop. While the
+"Mapa de calor" overlay is on, the keyboard is redrawn at most every 5 minutes
+(few color steps + diff: the per-key colors live in flash). Opt-in: started by
+the openaurum-heatmap user service, which the app's switch enables.
+
+  openaurum-heatmap          run (the service does this)
+  openaurum-heatmap reset    zero the counts
+
+Needs python-evdev and the user in the `input` group (reading /dev/input).
+"""
+
+import json
+import os
+import select
+import signal
+import sys
+import time
+
+# the checkout when run from the repository, else where install.sh put the package
+_root = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+for _p in (_root, os.path.join(_root, "share", "openaurum")):
+    if os.path.isfile(os.path.join(_p, "openaurum", "protocol.py")):
+        sys.path.insert(0, _p)
+        break
+from openaurum import paths  # noqa: E402
+
+HEAT = paths.HEAT
+NAME = "SDCINNOVATION Gaming Keyboard"
+FLUSH_S = 10
+REDRAW_S = 300
+
+# evdev code -> V60 key (xkb name, as in aurum_v60.BOARD)
+EVDEV = {
+    1: "ESC", 14: "BKSP", 15: "TAB", 28: "RTRN", 29: "LCTL", 42: "LFSH", 43: "BKSL",
+    54: "RTSH", 56: "LALT", 57: "SPCE", 58: "CAPS", 86: "LSGT", 89: "AB11", 97: "RCTL",
+    100: "RALT", 125: "LWIN", 127: "COMP",
+    **{2 + i: f"AE{i + 1:02}" for i in range(12)},
+    **{16 + i: f"AD{i + 1:02}" for i in range(12)},
+    **{30 + i: f"AC{i + 1:02}" for i in range(11)},
+    **{44 + i: f"AB{i + 1:02}" for i in range(10)},
+}
+
+
+def load():
+    try:
+        with open(HEAT) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def save(counts):
+    os.makedirs(os.path.dirname(HEAT), exist_ok=True)
+    with open(HEAT + ".tmp", "w") as f:
+        json.dump(counts, f)
+    os.replace(HEAT + ".tmp", HEAT)
+
+
+def devices(evdev):
+    out = []
+    for path in evdev.list_devices():
+        try:
+            d = evdev.InputDevice(path)
+        except OSError:
+            continue
+        if d.name.startswith(NAME) and evdev.ecodes.EV_KEY in d.capabilities():
+            out.append(d)
+        else:
+            d.close()
+    return out
+
+
+def redraw():
+    try:
+        from openaurum import scenes
+        scenes.event("heat")  # no-op unless the overlay is on
+    except Exception as e:  # keyboard unplugged, busy...: next time
+        print(f"redraw: {e}", file=sys.stderr, flush=True)
+
+
+def run():
+    import evdev
+    counts = load()
+    dirty = False
+    last_save = last_draw = time.monotonic()
+    devs = []
+
+    def flush():
+        nonlocal dirty
+        if dirty:
+            save(counts)
+            dirty = False
+
+    def stop(*_):
+        flush()
+        sys.exit(0)
+
+    def zero(*_):  # `openaurum-heatmap reset`
+        nonlocal dirty
+        counts.clear()
+        dirty = True
+
+    signal.signal(signal.SIGTERM, stop)
+    signal.signal(signal.SIGINT, stop)
+    signal.signal(signal.SIGUSR1, zero)
+    while True:
+        if not devs:
+            devs = devices(evdev)
+            if not devs:
+                time.sleep(5)  # keyboard unplugged: wait for it
+                continue
+        ready, _, _ = select.select(devs, [], [], FLUSH_S)
+        for d in ready:
+            try:
+                for ev in d.read():
+                    if ev.type == evdev.ecodes.EV_KEY and ev.value == 1 and ev.code in EVDEV:
+                        key = EVDEV[ev.code]
+                        counts[key] = counts.get(key, 0) + 1
+                        dirty = True
+            except OSError:  # unplugged
+                for x in devs:
+                    x.close()
+                devs = []
+                break
+        now = time.monotonic()
+        if dirty and now - last_save >= FLUSH_S:
+            flush()
+            last_save = now
+        if now - last_draw >= REDRAW_S:
+            redraw()
+            last_draw = now
+
+
+if __name__ == "__main__":
+    if sys.argv[1:] == ["reset"]:
+        save({})
+        # the running service zeroes its own counts too
+        import subprocess
+        subprocess.run(["systemctl", "--user", "kill", "-s", "USR1",
+                        "openaurum-heatmap.service"], capture_output=True)
+    else:
+        run()

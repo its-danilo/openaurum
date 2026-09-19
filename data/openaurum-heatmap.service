@@ -1,0 +1,11 @@
+[Unit]
+Description=OpenAurum: mapa de calor da digitação (só contagem por tecla)
+PartOf=graphical-session.target
+
+[Service]
+ExecStart=%h/.local/bin/openaurum-heatmap
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=graphical-session.target

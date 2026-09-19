@@ -1,0 +1,1045 @@
+#!/usr/bin/env python3
+"""OpenAurum: lighting of the Pichau Aurum V60 (GTK4 + libadwaita).
+
+Changes go to the keyboard live (debounced, like the Pichau app sending one
+packet per slider step); the state is read back when the window gets focus
+and every 2 s, so theme switches or Fn shortcuts made meanwhile show up.
+In CustomLightning the drawing is an editor: click or drag over the keys to
+paint them with the brush color. The Cenas tab shows the per-key scenes and
+overlays of openaurum.scenes (gallery, automatic switches, typing heatmap).
+
+Protocol: openaurum/protocol.py · CLI: openaurum-cli
+"""
+
+import colorsys
+import math
+import os
+import sys
+
+# the checkout when run from the repository, else where install.sh put the package
+BIN = os.path.dirname(os.path.realpath(__file__))
+_root = os.path.dirname(BIN)
+for _p in (_root, os.path.join(_root, "share", "openaurum")):
+    if os.path.isfile(os.path.join(_p, "openaurum", "protocol.py")):
+        sys.path.insert(0, _p)
+        break
+from openaurum import integrations  # noqa: E402
+from openaurum import protocol as kb  # noqa: E402
+from openaurum import scenes  # noqa: E402
+
+import gi  # noqa: E402
+
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+from gi.repository import Adw, Gdk, GLib, GObject, Gtk, Pango  # noqa: E402
+
+APP_ID = "io.github.its_danilo.OpenAurum"
+DEBOUNCE_MS = 120
+POLL_S = 2
+BLACK = "#000000"
+
+
+def rgba(hexcolor):
+    c = Gdk.RGBA()
+    c.parse(hexcolor)
+    return c
+
+
+def rgba_hex(c):
+    return "#%02x%02x%02x" % (round(c.red * 255), round(c.green * 255), round(c.blue * 255))
+
+
+def rounded(cr, x, y, w, h, r):
+    cr.new_sub_path()
+    cr.arc(x + w - r, y + r, r, -math.pi / 2, 0)
+    cr.arc(x + w - r, y + h - r, r, 0, math.pi / 2)
+    cr.arc(x + r, y + h - r, r, math.pi / 2, math.pi)
+    cr.arc(x + r, y + r, r, math.pi, 3 * math.pi / 2)
+    cr.close_path()
+
+
+def theme_colors():
+    """The theme palette at full value (one-hue themes keep their shades)."""
+    out = []
+    for name, c in integrations.theme_palette():
+        h, s, _ = kb.hex_to_hsv(c)
+        v = kb.hsv_to_hex(h, s, 255)
+        if v not in [x for _, x in out]:
+            out.append((name, v))
+    return out
+
+
+class Preview(Gtk.DrawingArea):
+    """The V60 drawn key by key, lit with the current settings. In
+    CustomLightning it shows the per-key colors and paints on click/drag."""
+
+    UNITS, ROWS = 15, 5
+
+    def __init__(self, on_paint=None, height=190):
+        super().__init__()
+        self.interactive = on_paint is not None
+        self.state = None
+        self.keys = {}  # CustomLightning colors
+        self.rects = []  # (key, x, y, w, h) from the last draw, for hit tests
+        self.hover = None
+        self.on_paint = on_paint
+        self.set_content_height(height)
+        self.set_hexpand(True)
+        self.set_draw_func(self.draw)
+        if not self.interactive:
+            return
+
+        drag = Gtk.GestureDrag()
+        drag.connect("drag-begin", lambda g, x, y: self.paint_at(x, y, new=True))
+        drag.connect("drag-update", self.on_drag)
+        self.add_controller(drag)
+        motion = Gtk.EventControllerMotion()
+        motion.connect("motion", lambda c, x, y: self.set_hover(self.key_at(x, y)))
+        motion.connect("leave", lambda c: self.set_hover(None))
+        self.add_controller(motion)
+        self.last_painted = None
+
+    @property
+    def editing(self):
+        return self.interactive and bool(self.state) and self.state["mode"] == kb.CUSTOM and bool(self.keys)
+
+    def update(self, state, keys=None):
+        self.state = state
+        self.keys = keys or {}
+        if self.interactive:
+            self.set_cursor_from_name("crosshair" if self.editing else None)
+        self.queue_draw()
+
+    def set_hover(self, key):
+        if self.editing and key != self.hover:
+            self.hover = key
+            self.queue_draw()
+
+    def key_at(self, x, y):
+        for key, kx, ky, kw, kh in self.rects:
+            if kx <= x <= kx + kw and ky <= y <= ky + kh:
+                return key
+        return None
+
+    def on_drag(self, gesture, dx, dy):
+        ok, sx, sy = gesture.get_start_point()
+        if ok:
+            self.paint_at(sx + dx, sy + dy)
+
+    def paint_at(self, x, y, new=False):
+        if not self.editing:
+            return
+        key = self.key_at(x, y)
+        if new:
+            self.last_painted = None
+        if key and key != self.last_painted:
+            self.last_painted = key
+            self.on_paint(key)
+
+    def key_color(self, key, x_frac):
+        st = self.state
+        if not st or st["mode"] == 0:
+            return None
+        if st["mode"] == kb.CUSTOM:
+            c = rgba(self.keys.get(key, BLACK))
+            return c.red, c.green, c.blue
+        if not st["mono"] or st["mode"] in kb.NO_MONO:
+            level = 0.35 + 0.65 * st["br"] / kb.MAX_BRIGHTNESS
+            r, g, b = colorsys.hsv_to_rgb(x_frac, 1, 1)
+            return r * level, g * level, b * level
+        # one color: the stored V already is the brightness (see protocol.Keyboard.apply);
+        # drawn with a floor so a dim keyboard is still readable here
+        base = rgba(kb.base_color(st))
+        level = 0.3 + 0.7 * st.get("level", kb.MONO_STEPS) / kb.MONO_STEPS
+        return base.red * level, base.green * level, base.blue * level
+
+    def draw(self, area, cr, width, height):
+        fg = self.get_color()
+        pad = 6 if self.interactive else 3
+        u = min((width - 2 * pad) / self.UNITS, (height - 2 * pad) / self.ROWS)
+        x0 = (width - u * self.UNITS) / 2
+        y0 = (height - u * self.ROWS) / 2
+        gap = max(2, u * 0.08)
+        self.rects = []
+
+        # case
+        rounded(cr, x0 - pad, y0 - pad, u * self.UNITS + 2 * pad, u * self.ROWS + 2 * pad, 12)
+        cr.set_source_rgba(fg.red, fg.green, fg.blue, 0.08)
+        cr.fill()
+
+        cr.select_font_face("sans-serif")
+        cr.set_font_size(max(7, u * 0.26))
+        labels = u >= 16  # thumbnails: no labels
+        for row, keys in enumerate(self.board()):
+            for x, w, key in keys:
+                kx, ky = x0 + x * u + gap / 2, y0 + row * u + gap / 2
+                kw, kh = w * u - gap, u - gap
+                if key == "RTRN" and row == 1:
+                    kh = 2 * u - gap  # ISO Enter: drawn once, spanning two rows
+                elif key == "RTRN":
+                    self.rects.append((key, kx, ky, kw, kh))  # still clickable below
+                    continue
+                self.rects.append((key, kx, ky, kw, kh))
+                color = self.key_color(key, (kx - x0) / (u * self.UNITS))
+                rounded(cr, kx, ky, kw, kh, u * 0.14)
+                if color:
+                    cr.set_source_rgb(*color)
+                    cr.fill_preserve()
+                    cr.set_source_rgba(1, 1, 1, 0.25)
+                else:
+                    cr.set_source_rgba(fg.red, fg.green, fg.blue, 0.12)
+                    cr.fill_preserve()
+                    cr.set_source_rgba(fg.red, fg.green, fg.blue, 0.2)
+                if self.editing and key == self.hover:
+                    cr.set_source_rgba(fg.red, fg.green, fg.blue, 0.9)
+                    cr.set_line_width(2.5)
+                else:
+                    cr.set_line_width(1)
+                cr.stroke()
+                label = kb.LABELS.get(key, "") if labels else ""
+                if label:
+                    lum = (0.3 * color[0] + 0.59 * color[1] + 0.11 * color[2]) if color else None
+                    if lum is None:
+                        cr.set_source_rgba(fg.red, fg.green, fg.blue, 0.6)
+                    elif lum > 0.55:
+                        cr.set_source_rgba(0, 0, 0, 0.75)
+                    else:
+                        cr.set_source_rgba(1, 1, 1, 0.9)
+                    ext = cr.text_extents(label)
+                    cr.move_to(kx + (kw - ext.width) / 2 - ext.x_bearing,
+                               ky + min(kh, u - gap) / 2 + ext.height / 2)
+                    cr.show_text(label)
+
+    @staticmethod
+    def board():
+        out = []
+        for keys in kb.BOARD:
+            x, row = 0.0, []
+            for key, w in keys:
+                row.append((x, w, key))
+                x += w
+            out.append(row)
+        return out
+
+
+class Swatch(Gtk.Button):
+    def __init__(self, name, color, on_pick):
+        super().__init__(tooltip_text=f"{name} {color}")
+        self.add_css_class("flat")
+        self.add_css_class("circular")
+        dot = Gtk.DrawingArea(content_width=22, content_height=22)
+        c = rgba(color)
+
+        def draw(_a, cr, w, h):
+            cr.arc(w / 2, h / 2, min(w, h) / 2, 0, 2 * math.pi)
+            cr.set_source_rgb(c.red, c.green, c.blue)
+            cr.fill()
+
+        dot.set_draw_func(draw)
+        self.set_child(dot)
+        self.connect("clicked", lambda *_: on_pick(color))
+
+
+class ColorPicker(Gtk.MenuButton):
+    """Color button with the picker in a popover (saturation/value square, hue
+    bar, hex entry). Replaces Gtk.ColorDialogButton, whose separate "Pick a Color"
+    window jumped up and down under Hyprland while dragging the crosshair.
+    Same API: get_rgba / set_rgba / notify::rgba. The color is committed when
+    the mouse is released (or Enter in the hex entry): the keyboard stores every
+    write in flash, so no stream of writes while dragging."""
+
+    __gtype_name__ = "OpenAurumColorPicker"
+    rgba = GObject.Property(type=Gdk.RGBA)
+
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self.h, self.s, self.v = 0.0, 1.0, 1.0
+        self.swatch = Gtk.DrawingArea(content_width=34, content_height=20)
+        self.swatch.set_draw_func(self.draw_swatch)
+        self.set_child(self.swatch)
+
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8,
+                      margin_top=8, margin_bottom=8, margin_start=8, margin_end=8)
+        self.plane = Gtk.DrawingArea(content_width=240, content_height=160)
+        self.plane.set_draw_func(self.draw_plane)
+        self.bar = Gtk.DrawingArea(content_width=240, content_height=18)
+        self.bar.set_draw_func(self.draw_bar)
+        for area, fn in ((self.plane, self.at_plane), (self.bar, self.at_bar)):
+            drag = Gtk.GestureDrag()
+            drag.connect("drag-begin", lambda g, x, y, fn=fn: fn(x, y))
+            drag.connect("drag-update", lambda g, dx, dy, fn=fn: fn(*self.drag_pos(g, dx, dy)))
+            drag.connect("drag-end", lambda *_: self.commit())
+            area.add_controller(drag)
+            area.set_cursor_from_name("crosshair")
+            box.append(area)
+        self.entry = Gtk.Entry(max_length=7, width_chars=8, placeholder_text="#rrggbb")
+        self.entry.connect("activate", self.on_entry)
+        row = Gtk.Box(spacing=8)
+        row.append(Gtk.Label(label="Hex", css_classes=["dim-label"]))
+        row.append(self.entry)
+        box.append(row)
+        pop = Gtk.Popover(child=box)
+        pop.connect("show", lambda *_: self.entry.set_text(self.hex()))
+        self.set_popover(pop)
+        self.set_direction(Gtk.ArrowType.LEFT)  # opens inside the window, not off its edge
+        self.set_rgba(rgba("#ff0000"))
+
+    @staticmethod
+    def drag_pos(g, dx, dy):
+        _, sx, sy = g.get_start_point()
+        return sx + dx, sy + dy
+
+    def hex(self):
+        return "#%02x%02x%02x" % tuple(round(c * 255) for c in colorsys.hsv_to_rgb(self.h, self.s, self.v))
+
+    def get_rgba(self):
+        return self.rgba
+
+    def set_rgba(self, c):
+        h, s, v = colorsys.rgb_to_hsv(c.red, c.green, c.blue)
+        if s > 0 and v > 0:
+            self.h = h  # keep the hue on greys/black
+        if v > 0:
+            self.s = s
+        self.v = v
+        self.redraw()
+        if rgba_hex(c) != rgba_hex(self.rgba or Gdk.RGBA()):
+            self.rgba = rgba(self.hex())
+
+    def commit(self):
+        self.entry.set_text(self.hex())
+        if self.hex() != rgba_hex(self.rgba):
+            self.rgba = rgba(self.hex())  # notify::rgba
+
+    def redraw(self):
+        for w in (self.swatch, self.plane, self.bar):
+            w.queue_draw()
+
+    def at_plane(self, x, y):
+        w, h = self.plane.get_width(), self.plane.get_height()
+        self.s = min(1, max(0, x / w))
+        self.v = min(1, max(0, 1 - y / h))
+        self.redraw()
+
+    def at_bar(self, x, y):
+        self.h = min(0.999, max(0, x / self.bar.get_width()))
+        self.redraw()
+
+    def on_entry(self, entry):
+        try:
+            kb.hex_to_hsv(entry.get_text())
+        except ValueError:
+            entry.add_css_class("error")
+            return
+        entry.remove_css_class("error")
+        text = entry.get_text().strip()
+        self.set_rgba(rgba(text if text.startswith("#") else "#" + text))
+
+    def draw_swatch(self, a, cr, w, h):
+        rounded(cr, 0, 0, w, h, 5)
+        cr.set_source_rgb(*colorsys.hsv_to_rgb(self.h, self.s, self.v))
+        cr.fill()
+
+    def draw_plane(self, a, cr, w, h):
+        import cairo
+        rounded(cr, 0, 0, w, h, 8)
+        cr.clip()
+        cr.set_source_rgb(*colorsys.hsv_to_rgb(self.h, 1, 1))
+        cr.paint()
+        g = cairo.LinearGradient(0, 0, w, 0)
+        g.add_color_stop_rgba(0, 1, 1, 1, 1)
+        g.add_color_stop_rgba(1, 1, 1, 1, 0)
+        cr.set_source(g)
+        cr.paint()
+        g = cairo.LinearGradient(0, 0, 0, h)
+        g.add_color_stop_rgba(0, 0, 0, 0, 0)
+        g.add_color_stop_rgba(1, 0, 0, 0, 1)
+        cr.set_source(g)
+        cr.paint()
+        x, y = self.s * w, (1 - self.v) * h
+        cr.arc(x, y, 7, 0, 2 * math.pi)
+        cr.set_source_rgb(1, 1, 1)
+        cr.set_line_width(2.5)
+        cr.stroke_preserve()
+        cr.set_source_rgb(0, 0, 0)
+        cr.set_line_width(1)
+        cr.stroke()
+
+    def draw_bar(self, a, cr, w, h):
+        import cairo
+        rounded(cr, 0, 0, w, h, h / 2)
+        cr.clip()
+        g = cairo.LinearGradient(0, 0, w, 0)
+        for i in range(7):
+            g.add_color_stop_rgb(i / 6, *colorsys.hsv_to_rgb(i / 6 % 1, 1, 1))
+        cr.set_source(g)
+        cr.paint()
+        x = self.h * w
+        cr.rectangle(x - 2, 0, 4, h)
+        cr.set_source_rgb(1, 1, 1)
+        cr.fill()
+
+
+class LevelScale(Gtk.Scale):
+    """Scenes' brightness 0-10. Every change rewrites every lit key in flash,
+    so nothing is sent while dragging: on_commit(level) runs when the mouse is
+    released (or 700 ms after arrow keys / the wheel)."""
+
+    def __init__(self, on_commit):
+        super().__init__(orientation=Gtk.Orientation.HORIZONTAL,
+                         adjustment=Gtk.Adjustment(upper=kb.MONO_STEPS, step_increment=1,
+                                                   page_increment=1))
+        self.on_commit = on_commit
+        self.held = False
+        self.timer = None
+        self.syncing = False
+        self.set_size_request(220, -1)
+        self.set_draw_value(False)
+        self.set_round_digits(0)
+        self.set_valign(Gtk.Align.CENTER)
+        for i in range(kb.MONO_STEPS + 1):
+            self.add_mark(i, Gtk.PositionType.BOTTOM, str(i))
+        self.committed = kb.MONO_STEPS
+        # the scale's own gestures claim the clicks: a legacy controller in the
+        # capture phase still sees press and release
+        legacy = Gtk.EventControllerLegacy(propagation_phase=Gtk.PropagationPhase.CAPTURE)
+        legacy.connect("event", self.on_event)
+        self.add_controller(legacy)
+        self.connect("value-changed", self.on_value)
+
+    def level(self):
+        return int(round(self.get_value()))
+
+    def set_level(self, level):
+        """From the state: ignored while the user holds the slider."""
+        if self.held or self.timer:
+            return
+        self.committed = level
+        self.syncing = True
+        self.set_value(level)
+        self.syncing = False
+
+    def on_event(self, _c, event):
+        t = event.get_event_type()
+        if t in (Gdk.EventType.BUTTON_PRESS, Gdk.EventType.TOUCH_BEGIN):
+            self.held = True
+        elif t in (Gdk.EventType.BUTTON_RELEASE, Gdk.EventType.TOUCH_END,
+                   Gdk.EventType.TOUCH_CANCEL):
+            self.held = False
+            GLib.idle_add(self.commit)  # after the scale took the release's value
+        return False
+
+    def on_value(self, _s):
+        if self.syncing or self.held:
+            return
+        if self.timer:
+            GLib.source_remove(self.timer)
+        self.timer = GLib.timeout_add(700, self.commit)
+
+    def commit(self):
+        if self.timer:
+            GLib.source_remove(self.timer)
+            self.timer = None
+        if self.level() != self.committed:
+            self.committed = self.level()
+            self.on_commit(self.committed)
+        return False
+
+
+class KindSwitch(Gtk.Box):
+    """"Cor única" | "RGB" as two linked toggle buttons (Adw.ToggleGroup needs
+    libadwaita 1.7). Property active-name = "mono" or "rgb"."""
+
+    __gtype_name__ = "OpenAurumKindSwitch"
+    active_name = GObject.Property(type=str, default="mono")
+
+    def __init__(self):
+        super().__init__(valign=Gtk.Align.CENTER, css_classes=["linked"])
+        self.mono = Gtk.ToggleButton(label="Cor única", active=True)
+        self.rgb = Gtk.ToggleButton(label="RGB", group=self.mono)
+        for b, name in ((self.mono, "mono"), (self.rgb, "rgb")):
+            b.connect("toggled", lambda b, n=name: b.get_active() and self.set_active_name(n))
+            self.append(b)
+
+    def get_active_name(self):
+        return self.active_name
+
+    def set_active_name(self, name):
+        (self.mono if name == "mono" else self.rgb).set_active(True)
+        if self.active_name != name:
+            self.active_name = name  # notify::active-name
+
+
+def button(label, callback, css=None):
+    b = Gtk.Button(label=label, valign=Gtk.Align.CENTER)
+    if css:
+        b.add_css_class(css)
+    b.connect("clicked", lambda *_: callback())
+    return b
+
+
+class Window(Adw.ApplicationWindow):
+    def __init__(self, app):
+        super().__init__(application=app, title="OpenAurum", default_width=560, default_height=840)
+        self.state = None
+        self.keys = {}
+        self.pending = {}
+        self.debounce = None
+        self.syncing = False  # widgets being set from the keyboard: don't write back
+
+        self.toasts = Adw.ToastOverlay()
+        self.stack = Gtk.Stack(transition_type=Gtk.StackTransitionType.CROSSFADE)
+        self.toasts.set_child(self.stack)
+
+        header = Adw.HeaderBar()
+        self.title = Adw.WindowTitle(title="OpenAurum", subtitle="Pichau Aurum V60")
+        self.views = Adw.ViewStack()
+        header.set_title_widget(Adw.ViewSwitcher(stack=self.views, policy=Adw.ViewSwitcherPolicy.WIDE))
+        view = Adw.ToolbarView()
+        view.add_top_bar(header)
+        view.set_content(self.toasts)
+        self.set_content(view)
+
+        self.stack.add_named(Adw.StatusPage(
+            icon_name="input-keyboard-symbolic", title="Aurum V60 não encontrado",
+            description="Conecte o teclado. Esta janela atualiza sozinha."), "missing")
+        self.stack.add_named(Adw.StatusPage(
+            icon_name="dialog-password-symbolic", title="Sem acesso ao teclado",
+            description="Falta a regra udev /etc/udev/rules.d/70-aurum-v60.rules "
+                        "(rode ./install.sh de novo e reconecte o teclado)."), "denied")
+        self.views.add_titled_with_icon(self.build_controls(), "effects", "Efeitos",
+                                        "applications-graphics-symbolic")
+        self.scenes_page = ScenesPage(self)
+        self.views.add_titled_with_icon(self.scenes_page, "scenes", "Cenas",
+                                        "view-grid-symbolic")
+        self.stack.add_named(self.views, "controls")
+
+        self.connect("notify::is-active", lambda *_: self.is_active() and self.on_focus())
+        GLib.timeout_add_seconds(POLL_S, self.poll)
+        self.refresh()
+
+    # --- widgets --------------------------------------------------------------
+
+    def build_controls(self):
+        page = Adw.PreferencesPage()
+
+        top = Adw.PreferencesGroup()
+        self.preview = Preview(self.paint_key)
+        top.add(self.preview)
+        page.add(top)
+
+        self.cave_note = Adw.ActionRow(
+            title="Cave Mode: teclado escurecido",
+            subtitle="Volta sozinho quando o Cave Mode acabar. Mudar algo aqui encerra o escurecimento.")
+        self.cave_note.add_prefix(Gtk.Image(icon_name="weather-clear-night-symbolic"))
+        top.add(self.cave_note)
+
+        effect = Adw.PreferencesGroup(title="Efeito")
+        self.mode_row = Adw.ComboRow(title="Modo", model=Gtk.StringList.new(kb.MODES))
+        self.mode_row.connect("notify::selected", self.on_mode)
+        effect.add(self.mode_row)
+        page.add(effect)
+
+        color = Adw.PreferencesGroup(title="Cor")
+        self.kind = KindSwitch()
+        self.mono_toggle = self.kind.mono
+        self.kind.connect("notify::active-name", self.on_kind)
+        self.kind_row = Adw.ActionRow(title="Tipo")
+        self.kind_row.add_suffix(self.kind)
+        color.add(self.kind_row)
+
+        self.color_btn = ColorPicker(valign=Gtk.Align.CENTER)
+        self.color_btn.connect("notify::rgba", self.on_color)
+        self.color_row = Adw.ActionRow(title="Cor", subtitle="Escolha qualquer cor")
+        self.color_row.add_suffix(self.color_btn)
+        color.add(self.color_row)
+
+        self.swatch_row = Adw.ActionRow(title="Cores do tema")
+        self.swatches = Gtk.Box(spacing=2, valign=Gtk.Align.CENTER)
+        self.swatch_row.add_suffix(self.swatches)
+        color.add(self.swatch_row)
+
+        self.theme_row = Adw.ActionRow(
+            title="Usar o tema atual",
+            subtitle="keyboard.conf do tema, ou a cor de destaque bem viva" if integrations.calos()
+            else "config.conf, ou a cor de destaque da paleta bem viva")
+        self.theme_row.add_suffix(button("Aplicar", self.on_theme, "suggested-action"))
+        color.add(self.theme_row)
+        self.color_group = color
+        page.add(color)
+
+        # CustomLightning only
+        keys = Adw.PreferencesGroup(
+            title="Tecla por tecla",
+            description="Clique ou arraste sobre as teclas para pintar com a cor do Pincel "
+                        "(acima). O teclado muda na hora e guarda as cores.")
+        row = Adw.ActionRow(title="Todas as teclas")
+        row.add_suffix(button("Apagar", lambda: self.paint_all(lambda k, f: BLACK)))
+        row.add_suffix(button("Pintar", lambda: self.paint_all(lambda k, f: self.brush())))
+        keys.add(row)
+        row = Adw.ActionRow(title="Degradê do tema", subtitle="As cores do tema, da esquerda para a direita")
+        row.add_suffix(button("Aplicar", self.paint_theme, "suggested-action"))
+        keys.add(row)
+        self.keys_group = keys
+        page.add(keys)
+
+        tune = Adw.PreferencesGroup(title="Ajustes")
+        self.bright = self.scale(kb.MAX_BRIGHTNESS, "brightness")
+        self.speed = self.scale(kb.MAX_SPEED, "speed")
+        for title, scale in (("Brilho", self.bright), ("Velocidade", self.speed)):
+            row = Adw.ActionRow(title=title)
+            row.add_suffix(scale)
+            tune.add(row)
+            if scale is self.bright:
+                self.bright_row = row
+            else:
+                self.speed_row = row
+        # CustomLightning: the keyboard ignores BR there, the scenes dim the colors
+        self.scene_bright = LevelScale(self.set_scene_level)
+        self.bright_row.add_suffix(self.scene_bright)
+        self.tune_group = tune
+        page.add(tune)
+        return page
+
+    def scale(self, maximum, key):
+        s = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, maximum, 1)
+        s.set_size_request(220, -1)
+        s.set_draw_value(False)
+        s.set_round_digits(0)
+        s.set_valign(Gtk.Align.CENTER)
+        for i in range(maximum + 1):
+            s.add_mark(i, Gtk.PositionType.BOTTOM, str(i))
+        s.connect("value-changed", lambda w: self.queue(**{key: int(round(w.get_value()))}))
+        return s
+
+    @staticmethod
+    def set_scale_range(s, maximum):
+        """0-10 in one color, 0-4 in RGB (the keyboard's own levels)."""
+        if s.get_adjustment().get_upper() == maximum:
+            return
+        s.set_range(0, maximum)
+        s.clear_marks()
+        for i in range(maximum + 1):
+            s.add_mark(i, Gtk.PositionType.BOTTOM, str(i))
+
+    def fill_swatches(self):
+        while (child := self.swatches.get_first_child()):
+            self.swatches.remove(child)
+        for name, c in theme_colors():
+            self.swatches.append(Swatch(name, c, self.on_swatch))
+
+    # --- keyboard -------------------------------------------------------------
+
+    def talk(self, fn):
+        """Run fn(kb.Keyboard) and switch pages on failure. Returns fn's result."""
+        try:
+            with kb.Keyboard() as k:
+                return fn(k)
+        except kb.NotFound:
+            self.show("missing")
+        except PermissionError:
+            self.show("denied")
+        except (kb.ProtocolError, ValueError, OSError) as e:
+            self.toasts.add_toast(Adw.Toast(title=f"Erro: {e}"))
+        return None
+
+    def show(self, page):
+        if page != "controls":
+            self.state = None
+        self.stack.set_visible_child_name(page)
+
+    def on_focus(self):
+        self.scenes_page.update_thumbs()  # theme or wallpaper may have changed
+        self.refresh()
+
+    def poll(self):
+        # also catches changes made elsewhere (theme switch, CLI, Fn shortcuts)
+        if self.get_mapped() and (self.state or kb.find_hidraw()):
+            self.refresh()
+        return True
+
+    def read(self, k):
+        st = k.state()
+        return st, (k.key_colors() if st["mode"] == kb.CUSTOM else {})
+
+    def refresh(self):
+        if self.debounce or self.pending:
+            return  # our own change is on its way
+        got = self.talk(self.read)
+        if got:
+            st, keys = got
+            if st != self.state or keys != self.keys:
+                self.fill_swatches()
+                self.sync(st, keys)
+            self.scenes_page.sync()
+            self.stack.set_visible_child_name("controls")
+
+    def sync(self, st, keys=None):
+        self.state = st
+        self.keys = keys if keys is not None else self.keys
+        mode = st["mode"]
+        custom, no_mono = mode == kb.CUSTOM, mode in kb.NO_MONO
+        mono = bool(st["mono"]) and not no_mono
+
+        self.syncing = True
+        self.mode_row.set_selected(mode)
+        self.kind.set_active_name("mono" if mono else "rgb")
+        if mono and not custom:
+            self.color_btn.set_rgba(rgba(kb.base_color(st)))  # the color, not its dimmed V
+        self.set_scale_range(self.bright, kb.MONO_STEPS if mono else kb.MAX_BRIGHTNESS)
+        self.bright.set_value(st.get("level", st["br"]) if mono else st["br"])
+        self.speed.set_value(st["sp"])
+        self.syncing = False
+
+        # what each mode has, as in the Pichau app
+        self.mono_toggle.set_sensitive(not no_mono)
+        self.kind_row.set_visible(not custom)
+        self.theme_row.set_visible(not custom)
+        self.keys_group.set_visible(custom)
+        self.color_row.set_title("Pincel" if custom else "Cor")
+        self.color_row.set_sensitive(custom or mono)
+        self.swatch_row.set_sensitive(custom or not no_mono)
+        self.color_group.set_sensitive(mode != 0)
+        self.tune_group.set_sensitive(mode != 0)
+        self.speed_row.set_sensitive(not custom)
+        self.bright.set_visible(not custom)
+        self.scene_bright.set_visible(custom)
+        self.title.set_subtitle(f"Pichau Aurum V60 · {kb.MODES[mode]}")
+        self.cave_note.set_visible(bool(scenes.load()["cave_prev"]))
+        rgb_off = mode in kb.RGB_OFF_AT_1 and not st["mono"]
+        self.bright_row.set_subtitle(
+            "Escurece as cores no PC e regrava as teclas ao soltar" if custom else
+            "Neste efeito em RGB, o brilho 1 já apaga (limite do teclado)" if rgb_off else "")
+        level = scenes.load()["brightness"]
+        self.scene_bright.set_level(level)
+        self.scenes_page.bright.set_level(level)
+        self.preview.update(st, self.preview_keys(level) if custom else self.keys)
+
+    def preview_keys(self, level):
+        """The dimmed keys drawn readable: full colors with the one-color floor."""
+        f = 0.3 + 0.7 * level / kb.MONO_STEPS
+        full = scenes.undim(self.keys, level)
+        if level == 0:  # nothing left to undim: draw the scene itself
+            full = scenes.render(dimmed=False) or full
+        return {k: scenes.scale(c, f) for k, c in full.items()}
+
+    def set_scene_level(self, level):
+        self.scene_bright.set_level(level)
+        self.scenes_page.bright.set_level(level)
+        self.scenes_page.after(self.talk(lambda k: scenes.set_brightness(level, k)))
+
+    def queue(self, **change):
+        if self.syncing or not self.state:
+            return
+        if "color" in change:
+            change.pop("rgb", None)
+            self.pending.pop("rgb", None)
+        if "rgb" in change:
+            self.pending.pop("color", None)
+        self.pending.update(change)
+        if self.debounce:
+            GLib.source_remove(self.debounce)
+        self.debounce = GLib.timeout_add(DEBOUNCE_MS, self.flush)
+
+    def flush(self):
+        self.debounce = None
+        change, self.pending = self.pending, {}
+        mode = change.pop("mode", self.state["mode"])
+        if mode != kb.CUSTOM and (mode != self.state["mode"] or change):
+            scenes.detach()  # an effect picked by hand: scenes let go
+
+        def go(k):
+            st = k.apply(mode=mode, **change)
+            return st, (k.key_colors() if st["mode"] == kb.CUSTOM else {})
+
+        got = self.talk(go)
+        if got:
+            self.sync(*got)
+        return False
+
+    # --- CustomLightning ------------------------------------------------------
+
+    def brush(self):
+        return rgba_hex(self.color_btn.get_rgba())
+
+    def paint(self, colors):
+        """colors = {key: '#rrggbb'}; only keys whose color changes are sent."""
+        full = scenes.undim(self.keys, scenes.load()["brightness"])
+        todo = {k: c for k, c in colors.items() if full.get(k) != c}
+        if not todo or not self.state or self.state["mode"] != kb.CUSTOM:
+            return
+
+        def go(k):
+            # hand painting becomes "Minha pintura", drawn at the scenes' brightness
+            scenes.paint_keys(todo, k)
+            return k.key_colors()
+
+        got = self.talk(go)
+        if got is not None:
+            self.keys = got
+            self.scenes_page.sync()
+        self.sync(self.state, self.keys)
+
+    def paint_key(self, key):
+        self.paint({key: self.brush()})
+
+    def paint_all(self, color_of):
+        rects = {key: kx for key, kx, *_ in self.preview.rects}
+        span = max(rects.values(), default=1) or 1
+        self.paint({key: color_of(key, rects.get(key, 0) / span) for key in kb.KEY_INDEX})
+
+    def paint_theme(self):
+        pal = [c for _, c in theme_colors()] or [self.brush()]
+
+        def gradient(_key, f):
+            if len(pal) == 1:
+                return pal[0]
+            pos = f * (len(pal) - 1)
+            i = min(int(pos), len(pal) - 2)
+            a, b, t = rgba(pal[i]), rgba(pal[i + 1]), pos - i
+            return rgba_hex(Gdk.RGBA(red=a.red + (b.red - a.red) * t,
+                                     green=a.green + (b.green - a.green) * t,
+                                     blue=a.blue + (b.blue - a.blue) * t, alpha=1))
+
+        self.paint_all(gradient)
+
+    # --- handlers -------------------------------------------------------------
+
+    def on_mode(self, row, _pspec):
+        if self.syncing or not self.state:
+            return
+        self.pending.clear()  # settings belong to the old mode
+        self.queue(mode=row.get_selected())
+
+    def on_kind(self, group, _pspec):
+        if group.get_active_name() == "rgb":
+            self.queue(rgb=True)
+        else:
+            self.queue(color=self.brush())
+
+    def on_color(self, btn, _pspec):
+        if self.state and self.state["mode"] != kb.CUSTOM:  # in CustomLightning it's the brush
+            self.queue(color=self.brush())
+
+    def on_swatch(self, color):
+        if self.state and self.state["mode"] == kb.CUSTOM:
+            self.color_btn.set_rgba(rgba(color))
+        else:
+            self.queue(color=color)
+
+    def on_theme(self):
+        conf = integrations.theme_settings()
+        if "mode" not in conf and self.state["mode"] in (0, kb.CUSTOM, *kb.NO_MONO):
+            conf["mode"] = 1  # Static: the user asked for the theme color
+        scenes.detach()
+        got = self.talk(lambda k: (k.apply(**conf), {}))
+        if got:
+            self.fill_swatches()
+            self.sync(*got)
+
+
+class SceneCard(Gtk.Button):
+    def __init__(self, name, title, on_pick):
+        super().__init__(tooltip_text=title)
+        self.name = name
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        self.thumb = Preview(height=58)
+        self.thumb.set_size_request(150, -1)
+        box.append(self.thumb)
+        box.append(Gtk.Label(label=title, ellipsize=Pango.EllipsizeMode.END))
+        self.set_child(box)
+        self.connect("clicked", lambda *_: on_pick(name))
+
+    def show(self, colors):
+        self.thumb.update({"mode": kb.CUSTOM}, colors)
+
+
+class ScenesPage(Adw.PreferencesPage):
+    """Gallery of openaurum.scenes, the overlays and the automatic switches."""
+
+    # (key, title, subtitle on calOS, subtitle elsewhere)
+    AUTO = [
+        ("wallpaper", "Seguir o wallpaper",
+         "Com a cena Wallpaper escolhida: acompanha SUPER+CTRL+B e a troca de tema",
+         "Com a cena Wallpaper escolhida: redesenha em «openaurum-cli event wallpaper»"),
+        ("colemak", "Colemak que ensina",
+         "No Colemak-DH: zonas de cada dedo, fileira do meio acesa",
+         "«openaurum-cli overlay colemak on --auto»: zonas de cada dedo do Colemak-DH"),
+        ("game", "Modo de jogo", "CTRL+SUPER+G acende WASD e companhia",
+         "«openaurum-cli overlay game on --auto» acende WASD e companhia"),
+        ("screen", "Modos de tela",
+         "Cave: vermelho bem escuro (#100000); Night: cenas mais quentes",
+         "«openaurum-cli screen cave|night|normal»: vermelho bem escuro / cenas mais quentes"),
+    ]
+
+    def __init__(self, win):
+        super().__init__()
+        self.win = win
+        self.syncing = False
+        self.cards = {}
+
+        light = Adw.PreferencesGroup(title="Brilho")
+        self.bright = LevelScale(win.set_scene_level)
+        row = Adw.ActionRow(title="Brilho das cenas",
+                            subtitle="Escurece as cores no PC e regrava as teclas ao soltar")
+        row.add_suffix(self.bright)
+        light.add(row)
+        self.add(light)
+
+        groups = {}
+        for name, (title, group, _) in scenes.SCENES.items():
+            if group not in groups:
+                g = Adw.PreferencesGroup(title={"Tema": "Do tema", "Arte": "Artes",
+                                                "Minha": "Sua"}.get(group, group))
+                flow = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE, homogeneous=True,
+                                   max_children_per_line=3, min_children_per_line=2,
+                                   row_spacing=6, column_spacing=6)
+                g.add(flow)
+                self.add(g)
+                groups[group] = flow
+            card = SceneCard(name, title, self.pick)
+            self.cards[name] = card
+            groups[group].append(card)
+
+        heat = Adw.PreferencesGroup(
+            title="Mapa de calor",
+            description="Conta quantas vezes cada tecla do Aurum é apertada (sem texto, sem ordem) "
+                        "e pinta o teclado do azul (pouco) ao vermelho (muito).")
+        self.collect = Adw.SwitchRow(title="Contar teclas digitadas")
+        self.collect.connect("notify::active", self.on_collect)
+        heat.add(self.collect)
+        self.heat = Adw.SwitchRow(title="Mostrar no teclado",
+                                  subtitle="Por cima da cena; redesenha sozinho a cada 5 min")
+        self.heat.connect("notify::active", self.on_heat)
+        heat.add(self.heat)
+        row = Adw.ActionRow(title="Contagem")
+        row.add_suffix(button("Atualizar agora", self.redraw_heat))
+        row.add_suffix(button("Zerar", self.reset_heat))
+        heat.add(row)
+        self.add(heat)
+
+        auto = Adw.PreferencesGroup(title="Automático",
+                                    description="O teclado reage ao sistema e volta sozinho depois")
+        self.autos = {}
+        on_calos = integrations.calos()
+        for key, title, sub_calos, sub in self.AUTO:
+            row = Adw.SwitchRow(title=title, subtitle=sub_calos if on_calos else sub)
+            row.connect("notify::active", lambda r, _, k=key: self.on_auto(k, r.get_active()))
+            auto.add(row)
+            self.autos[key] = row
+        self.add(auto)
+
+        end = Adw.PreferencesGroup()
+        self.stop_row = Adw.ActionRow(title="Desligar cenas",
+                                      subtitle="Volta para o efeito que estava antes")
+        self.stop_row.add_suffix(button("Desligar", self.stop, "destructive-action"))
+        end.add(self.stop_row)
+        self.writes = Gtk.Label(css_classes=["dim-label", "caption"], margin_top=12,
+                                wrap=True, justify=Gtk.Justification.CENTER)
+        end.add(self.writes)
+        self.add(end)
+
+        self.update_thumbs()
+        self.sync()
+
+    def update_thumbs(self):
+        for name, card in self.cards.items():
+            try:
+                card.show(scenes.render_scene(name))
+            except Exception:  # a broken wallpaper file must not break the page
+                card.show({})
+
+    def sync(self):
+        st = scenes.load()
+        self.syncing = True
+        for name, card in self.cards.items():
+            on = st["active"] and st["base"] == name
+            (card.add_css_class if on else card.remove_css_class)("suggested-action")
+        self.bright.set_level(st["brightness"])
+        self.heat.set_active("heat" in st["overlays"])
+        for key, row in self.autos.items():
+            row.set_active(bool(st["auto"].get(key)))
+        self.collect.set_active(self.service("is-enabled") == 0)
+        self.syncing = False
+        self.stop_row.set_sensitive(st["active"] or bool(st["overlays"]))
+        heat = scenes.load_heat()
+        total_keys = sum(heat.values())
+        if total_keys:
+            top = max(heat, key=heat.get)
+            name = kb.LABELS.get(top) or {"SPCE": "Espaço"}.get(top, top)
+            self.collect.set_subtitle(f"{total_keys} toques contados · mais usada: {name} ({heat[top]})")
+        else:
+            self.collect.set_subtitle("Nada contado ainda (salva a cada 10 s)")
+        today, total = kb.writes()
+        self.writes.set_label(
+            f"{today} gravações por tecla hoje · {total} no total\n"
+            "As cores por tecla ficam guardadas no teclado: as cenas só regravam o que muda, "
+            "nunca em animação.")
+
+    def after(self, ok):
+        if ok is not None:
+            self.win.refresh()
+        self.sync()
+
+    def pick(self, name):
+        self.after(self.win.talk(lambda k: scenes.set_scene(name, k)))
+
+    def toggle(self, name, on):
+        if not self.syncing:
+            self.after(self.win.talk(lambda k: scenes.overlay(name, on, k)))
+
+    def stop(self):
+        self.after(self.win.talk(lambda k: scenes.stop(k)))
+
+    def on_auto(self, key, on):
+        if self.syncing:
+            return
+        scenes.set_auto(key, on)
+        if key == "screen":
+            self.after(self.win.talk(lambda k: scenes.refresh(k)))
+
+    @staticmethod
+    def service(*cmd):
+        import subprocess
+        return subprocess.run(["systemctl", "--user", *cmd, "openaurum-heatmap.service"],
+                              capture_output=True).returncode
+
+    def on_collect(self, row, _pspec):
+        if not self.syncing:
+            self.service("enable" if row.get_active() else "disable", "--now")
+
+    def on_heat(self, row, _pspec):
+        if self.syncing:
+            return
+        if row.get_active() and self.service("is-enabled") != 0:
+            self.service("enable", "--now")  # nothing to show without counting
+        self.toggle("heat", row.get_active())
+
+    def redraw_heat(self):
+        if "heat" in scenes.load()["overlays"]:
+            self.after(self.win.talk(lambda k: scenes.refresh(k)))
+        else:
+            self.sync()
+
+    def reset_heat(self):
+        import subprocess
+        subprocess.run([os.path.join(BIN, "openaurum-heatmap"), "reset"])
+        if "heat" in scenes.load()["overlays"]:
+            self.after(self.win.talk(lambda k: scenes.refresh(k)))
+
+
+class App(Adw.Application):
+    def __init__(self):
+        super().__init__(application_id=APP_ID)
+
+    def do_startup(self):
+        Adw.Application.do_startup(self)
+        Gtk.Window.set_default_icon_name(APP_ID)
+
+    def do_activate(self):
+        win = self.get_active_window() or Window(self)
+        win.present()
+
+
+if __name__ == "__main__":
+    sys.exit(App().run(sys.argv))

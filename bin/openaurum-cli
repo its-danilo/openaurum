@@ -1,0 +1,161 @@
+#!/usr/bin/env python3
+"""OpenAurum: Pichau Aurum V60 lighting from the command line (the app is `openaurum`).
+
+  openaurum-cli status
+  openaurum-cli set [--mode NAME|0-16] [--brightness 0-10] [--speed 0-2]
+                    [--color '#rrggbb' | --rgb]
+  openaurum-cli off                    # LightOff
+  openaurum-cli modes                  # list the effects
+  openaurum-cli theme                  # desktop theme color (config.conf / calOS theme)
+
+Scenes (per-key pictures, CustomLightning):
+  openaurum-cli scene list|off|<name>
+  openaurum-cli scene brightness 0-10       # dims the scene (rewrites every lit key)
+  openaurum-cli overlay colemak|game|heat on|off [--auto]
+  openaurum-cli screen normal|night|cave    # Night: warmer scenes; Cave: dark red
+  openaurum-cli event wallpaper|theme|screen  # for hooks: re-render if a scene depends on it
+  openaurum-cli writes                      # per-key writes today / total
+
+Theme: `mode / brightness / speed / color` from ~/.config/openaurum/config.conf
+(and the calOS theme's keyboard.conf), else the palette's accent at full
+saturation (LEDs wash out pastel colors). With the keyboard off (LightOff), in
+CustomLightning or in an RGB-only effect (Spin, ColorLoop), theme leaves it
+alone unless a mode is set.
+"""
+
+import argparse
+import os
+import sys
+
+# the checkout when run from the repository, else where install.sh put the package
+_root = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+for _p in (_root, os.path.join(_root, "share", "openaurum")):
+    if os.path.isfile(os.path.join(_p, "openaurum", "protocol.py")):
+        sys.path.insert(0, _p)
+        break
+from openaurum import integrations, paths  # noqa: E402
+from openaurum import protocol as kb  # noqa: E402
+from openaurum import scenes  # noqa: E402
+
+LOG = paths.LOG
+
+
+def die(msg):
+    # hooks run this in the background with the output thrown away: keep a trace
+    import datetime
+    try:
+        os.makedirs(paths.STATE_DIR, exist_ok=True)
+        with open(LOG, "a") as f:
+            f.write(f"{datetime.datetime.now():%F %T} {' '.join(sys.argv[1:])}: {msg}\n")
+    except OSError:
+        pass
+    sys.exit(f"openaurum-cli: {msg}")
+
+
+def main():
+    p = argparse.ArgumentParser(prog="openaurum-cli", description=__doc__.split("\n")[0])
+    sub = p.add_subparsers(dest="cmd", required=True)
+    for name in ("status", "off", "modes", "theme", "writes"):
+        sub.add_parser(name)
+    sc = sub.add_parser("scene")
+    sc.add_argument("name")
+    sc.add_argument("level", nargs="?", type=int, help="with `brightness`: 0-10")
+    ov = sub.add_parser("overlay")
+    ov.add_argument("name", choices=list(scenes.OVERLAYS))
+    ov.add_argument("state", choices=["on", "off"])
+    ov.add_argument("--auto", action="store_true", help="from a hook: obey the app's Automatic switches")
+    ev = sub.add_parser("event")
+    ev.add_argument("what", choices=["wallpaper", "theme", "screen"])
+    scr = sub.add_parser("screen")
+    scr.add_argument("mode", choices=list(integrations.SCREEN_MODES))
+    s = sub.add_parser("set")
+    s.add_argument("--mode", type=kb.mode_number, metavar="NAME")
+    s.add_argument("--brightness", type=int, metavar="0-10",
+                   help="0-10 in one color, 0-4 in RGB (the keyboard's own levels)")
+    s.add_argument("--speed", type=int, metavar="0-2")
+    g = s.add_mutually_exclusive_group()
+    g.add_argument("--color", metavar="#rrggbb")
+    g.add_argument("--rgb", action="store_true", help="multicolor instead of one color")
+    args = p.parse_args()
+
+    if args.cmd == "writes":
+        today, total = kb.writes()
+        print(f"per-key writes: {today} today, {total} total")
+        return
+    if args.cmd == "scene" and args.name == "list":
+        for name, (title, group, _) in scenes.SCENES.items():
+            print(f"{name:15} {group:6} {title}")
+        return
+
+    if args.cmd == "modes":
+        for i, m in enumerate(kb.MODES):
+            note = {kb.CUSTOM: "  (per-key colors: the openaurum app)"}.get(i, "")
+            print(f"{i:2}  {m}" + ("  (RGB only)" if i in kb.NO_MONO else note))
+        return
+
+    try:
+        # hooks: scenes open the keyboard only when they have something to write
+        if args.cmd == "screen":
+            integrations.set_screen_mode(args.mode)
+            scenes.event("screen")
+            return
+        if args.cmd == "event":
+            scenes.event(args.what)
+            return
+        st = scenes.load()
+        if args.cmd == "theme" and st["cave_prev"]:
+            return  # Cave Mode: the keyboard stays dark red whatever the theme
+        if args.cmd == "theme" and (st["active"] or st["overlays"]):
+            scenes.event("theme")  # scenes own the keyboard: re-render the themed ones
+            return
+        with kb.Keyboard() as k:
+            if args.cmd == "status":
+                st = k.state()
+                if kb.is_mono(st):
+                    color = f"{kb.base_color(st)} (lit {kb.hsv_to_hex(st['h'], st['s'], st['v'])})"
+                    bright = f"{st['level']}/{kb.MONO_STEPS}"
+                else:
+                    color, bright = "RGB", f"{st['br']}/{kb.MAX_BRIGHTNESS}"
+                sc = scenes.load()
+                if st["mode"] == kb.CUSTOM:  # BR is ignored here: the scenes' own level
+                    bright = f"{sc['brightness']}/{kb.MONO_STEPS}"
+                    color = f"scene {sc['base']}" if sc["active"] else "per-key"
+                print(f"{kb.MODES[st['mode']]}  brightness {bright}"
+                      f"  speed {st['sp']}/{kb.MAX_SPEED}  color {color}")
+            elif args.cmd == "off":
+                scenes.detach()
+                k.apply(mode=0)
+            elif args.cmd == "scene":
+                if args.name == "off":
+                    scenes.stop(k)
+                elif args.name == "brightness":
+                    if args.level is None:
+                        raise ValueError("scene brightness 0-10")
+                    scenes.set_brightness(args.level, k)
+                else:
+                    scenes.set_scene(args.name, k)
+            elif args.cmd == "overlay":
+                auto = {"colemak": "colemak", "game": "game"}.get(args.name) if args.auto else None
+                scenes.overlay(args.name, args.state == "on", k, auto)
+            elif args.cmd == "theme":
+                conf = integrations.theme_settings()
+                if "mode" not in conf and k.current_mode() in (0, kb.CUSTOM, *kb.NO_MONO):
+                    return  # off, per-key colors or an RGB-only effect: nothing to color
+                k.apply(**conf)
+            else:
+                if args.mode is not None:
+                    scenes.detach()  # an effect picked by hand: scenes let go
+                k.apply(mode=args.mode, brightness=args.brightness, speed=args.speed,
+                        color=args.color, rgb=args.rgb)
+    except kb.NotFound:
+        if args.cmd in ("theme", "event", "screen") or getattr(args, "auto", False):
+            return  # not plugged in: nothing to do
+        die("Aurum V60 not found")
+    except PermissionError as e:
+        die(f"no access to {e.filename} (udev rule /etc/udev/rules.d/70-aurum-v60.rules)")
+    except (ValueError, kb.ProtocolError) as e:
+        die(str(e))
+
+
+if __name__ == "__main__":
+    main()
