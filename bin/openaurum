@@ -31,7 +31,7 @@ import gi  # noqa: E402
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, Gdk, GLib, GObject, Gtk, Pango  # noqa: E402
+from gi.repository import Adw, Gdk, Gio, GLib, GObject, Gtk, Pango  # noqa: E402
 
 APP_ID = "io.github.its_danilo.OpenAurum"
 DEBOUNCE_MS = 120
@@ -867,9 +867,9 @@ class ScenesPage(Adw.PreferencesPage):
          "«openaurum-cli overlay colemak on --auto»: zonas de cada dedo do Colemak-DH"),
         ("game", "Modo de jogo", "CTRL+SUPER+G acende WASD e companhia",
          "«openaurum-cli overlay game on --auto» acende WASD e companhia"),
-        ("screen", "Modos de tela",
-         "Cave: vermelho bem escuro (#100000); Night: cenas mais quentes",
-         "«openaurum-cli screen cave|night|normal»: vermelho bem escuro / cenas mais quentes"),
+        ("screen", "Modo Cave",
+         "Vermelho bem escuro (#100000); o Night não mexe no teclado",
+         "«openaurum-cli screen cave|normal»: vermelho bem escuro"),
     ]
 
     def __init__(self, win):
@@ -1035,6 +1035,40 @@ class App(Adw.Application):
     def do_startup(self):
         Adw.Application.do_startup(self)
         Gtk.Window.set_default_icon_name(APP_ID)
+        self.watch_user_css()
+
+    def watch_user_css(self):
+        """GTK reads ~/.config/gtk-4.0/gtk.css (and what it @imports) only at
+        startup, so a theme switch (calOS rewrites those files) used to show up
+        only after reopening. Load it again on every change, one step above
+        GTK's own copy, and refresh the theme swatches and scene thumbnails."""
+        folder = os.path.join(GLib.get_user_config_dir(), "gtk-4.0")
+        self.css_path = os.path.join(folder, "gtk.css")
+        self.css = Gtk.CssProvider()
+        self.css.connect("parsing-error", lambda *_: None)  # GTK already warned at startup
+        Gtk.StyleContext.add_provider_for_display(
+            Gdk.Display.get_default(), self.css, Gtk.STYLE_PROVIDER_PRIORITY_USER + 1)
+        self.css_timer = None
+        self.css_monitor = Gio.File.new_for_path(folder).monitor_directory(Gio.FileMonitorFlags.NONE)
+        self.css_monitor.connect("changed", self.on_css_changed)
+
+    def on_css_changed(self, *_):
+        # a theme switch writes several files: reload once, after the last one
+        if self.css_timer:
+            GLib.source_remove(self.css_timer)
+        self.css_timer = GLib.timeout_add(300, self.reload_css)
+
+    def reload_css(self):
+        self.css_timer = None
+        if os.path.isfile(self.css_path):
+            self.css.load_from_path(self.css_path)
+        else:
+            self.css.load_from_string("")
+        win = self.get_active_window()
+        if win:
+            win.fill_swatches()
+            win.scenes_page.update_thumbs()
+        return False
 
     def do_activate(self):
         win = self.get_active_window() or Window(self)

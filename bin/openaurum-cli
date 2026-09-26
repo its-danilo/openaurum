@@ -12,7 +12,7 @@ Scenes (per-key pictures, CustomLightning):
   openaurum-cli scene list|off|<name>
   openaurum-cli scene brightness 0-10       # dims the scene (rewrites every lit key)
   openaurum-cli overlay colemak|game|heat on|off [--auto]
-  openaurum-cli screen normal|night|cave    # Night: warmer scenes; Cave: dark red
+  openaurum-cli screen normal|night|cave    # Cave: dark red; Night = normal here
   openaurum-cli event wallpaper|theme|screen  # for hooks: re-render if a scene depends on it
   openaurum-cli writes                      # per-key writes today / total
 

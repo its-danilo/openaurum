@@ -16,6 +16,7 @@ the monitor under the mouse. Keys set in config.conf win over calOS.
 
 Screen mode (Night / Cave) comes from `openaurum-cli screen normal|night|cave`
 ($XDG_RUNTIME_DIR/openaurum-screen); on calOS, from calos-screen-mode too.
+Only Cave changes the keyboard: Night is the same as normal here.
 """
 
 import os

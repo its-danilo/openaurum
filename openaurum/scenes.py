@@ -1,10 +1,9 @@
 """Scenes for the Pichau Aurum V60: per-key pictures computed on the PC and
 written through CustomLightning (protocol.Keyboard.push), plus overlays
-that react to the system (Colemak-DH, game mode, Night/Cave, typing heatmap).
+that react to the system (Colemak-DH, game mode, Cave, typing heatmap).
 
 Layers, bottom to top:
-  base scene (the user's pick)  <  colemak / game / heat overlays
-  <  night / cave filter (integrations.screen_mode)  <  brightness
+  base scene (the user's pick)  <  colemak / game / heat overlays  <  brightness
 
 Brightness (0-10) is done here, by dimming every key's color: CustomLightning
 ignores the keyboard's own BR byte. The state keeps the full colors (paint too);
@@ -27,7 +26,8 @@ Cave Mode (screen mode "cave") doesn't go through the per-key table: it
 switches to Static in one color CAVE_COLOR (dark by its own V: brightness
 is ignored in one color), 1-2 mode writes, and puts
 back Static's own settings and the previous mode afterwards. Events during Cave
-only update the state.
+only update the state. Night Mode leaves the keyboard as in normal mode (a warm
+filter over the scenes looked wrong on the LEDs).
 """
 
 import colorsys
@@ -360,10 +360,6 @@ OVERLAYS = {  # name: (title, fn); later in this dict = on top
 }
 
 
-def night(colors):
-    return {k: scale(mix(c, "#ff8000", 0.45), 0.4) for k, c in colors.items()}
-
-
 def dim(colors, level):
     """Brightness level 0-10: same curve as the one-color modes (MONO_LEVELS[16])."""
     if level >= kb.MONO_STEPS:
@@ -426,9 +422,6 @@ def render(st=None, dimmed=True):
     colors = render_scene(st["base"]) if st["active"] else {k: "#000000" for k in GEO}
     for o in overlays:
         colors = OVERLAYS[o][1](colors)
-    mode = screen_mode() if st["auto"].get("screen") else "normal"
-    if mode == "night":
-        colors = night(colors)
     return dim(colors, st["brightness"]) if dimmed else colors
 
 
@@ -552,8 +545,7 @@ def event(what):
         if what == "theme" and not ((st["active"] and st["base"] in THEMED) or st["overlays"]):
             return 0
         cave = st["cave_prev"] or (st["auto"].get("screen") and screen_mode() == "cave")
-        if what == "screen" and not (cave or (st["auto"].get("screen")
-                                              and (st["active"] or st["overlays"]))):
+        if what == "screen" and not cave:  # normal <-> night: nothing changes here
             return 0
         return _refresh(s)
 

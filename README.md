@@ -39,7 +39,7 @@
 - **Tecla por tecla** (CustomLightning): clique ou arraste sobre o desenho do teclado para pintar. Também dá para pintar tudo ou aplicar um degradê do tema.
 - **Cenas**: mais de 40 desenhos prontos para as teclas, em grupos: tema, wallpaper, arte, games, espaço, estações, Brasil e mundo, noturnas. Também guarda a sua própria pintura. As cenas têm **brilho de 0 a 10**.
 - **Overlays automáticos**: zonas de cada dedo do Colemak-DH, destaque de WASD no modo de jogo e **mapa de calor** da digitação, que conta só quantas vezes cada tecla foi apertada (nunca o texto).
-- **Modos de tela**: *Night* deixa as cenas mais quentes; *Cave* troca o teclado para um vermelho bem escuro e depois devolve tudo como estava.
+- **Modo Cave**: troca o teclado para um vermelho bem escuro e depois devolve tudo como estava (o *Night* não mexe no teclado).
 - **Linha de comando completa** (`openaurum-cli`) para scripts, atalhos e troca de tema.
 - **Cuidado com a memória do teclado**: só grava as teclas que mudaram, e mostra quantas gravações foram feitas (veja [Segurança](#segurança)).
 
@@ -136,7 +136,7 @@ openaurum-cli scene off                            # volta ao efeito anterior
 openaurum-cli overlay game on                      # WASD e companhia acesos
 openaurum-cli overlay colemak on                   # zonas dos dedos (Colemak-DH)
 openaurum-cli overlay heat on                      # mapa de calor por cima da cena
-openaurum-cli screen night                         # normal | night | cave
+openaurum-cli screen cave                          # normal | night | cave (night = normal no teclado)
 openaurum-cli writes                               # gravações por tecla (hoje / total)
 ```
 
@@ -176,8 +176,8 @@ openaurum-cli overlay game on --auto     # e: overlay game off --auto
 # ao trocar o layout do teclado para Colemak-DH e de volta
 openaurum-cli overlay colemak on --auto  # e: overlay colemak off --auto
 
-# luz noturna / modo escuro total
-openaurum-cli screen night               # cave | normal
+# modo escuro total (night não mexe no teclado)
+openaurum-cli screen cave                # night | normal
 ```
 
 Exemplo no Hyprland (`hyprland.conf`):
@@ -276,7 +276,7 @@ Contribuições são bem-vindas. Por favor, **não** envie pull requests com com
 - per-key painting (CustomLightning)
 - 40+ ready-made per-key scenes with their own brightness
 - automatic overlays (Colemak-DH finger zones, game mode, typing heatmap)
-- Night/Cave screen modes
+- Cave screen mode (dark red keyboard, restored afterwards)
 
 **Install:** get Python 3 + PyGObject + GTK 4 + libadwaita ≥ 1.4 (see the table above), then `git clone https://github.com/its-danilo/openaurum.git && cd openaurum && ./install.sh`. Everything goes to `~/.local`. `sudo` is only used for a udev rule, which gives the logged-in user access to this one device. `./install.sh --uninstall` removes everything.
 
