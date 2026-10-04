@@ -41,4 +41,4 @@ hl.window_rule({
 
 ## Cave Mode
 
-Em `cave`, o teclado vai para o efeito Static em vermelho bem escuro (`#100000`), em qualquer tema, e o efeito anterior é guardado. Ao sair do Cave, tudo volta exatamente como estava. A tabela de cores por tecla não é tocada: são só uma ou duas gravações de efeito.
+Em `cave`, o teclado vai para o efeito Static em vermelho bem escuro (`#0b0000`), em qualquer tema, e o efeito anterior é guardado. Ao sair do Cave, tudo volta exatamente como estava. A tabela de cores por tecla não é tocada: são só uma ou duas gravações de efeito.

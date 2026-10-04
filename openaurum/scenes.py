@@ -383,7 +383,7 @@ def shown(s):
 
 
 # the same in every theme: theme hues this dark still hurt the user's eyes, red doesn't
-CAVE_COLOR = "#100000"
+CAVE_COLOR = "#0b0000"
 
 
 # --- state + apply ---------------------------------------------------------------
@@ -457,7 +457,7 @@ def _cave(s):
             mode = k.current_mode()
             st["cave_prev"] = {"mode": mode, "static": k.stored(1)}
             save(st)
-        # full level: in one color the V is the brightness, and #100000 already is dark;
+        # full level: in one color the V is the brightness, and #0b0000 already is dark;
         # remember=False keeps the user's own Static level/color for afterwards
         k.apply(mode=1, brightness=kb.MONO_STEPS, color=CAVE_COLOR, remember=False)
         return True
