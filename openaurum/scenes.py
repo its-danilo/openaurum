@@ -18,7 +18,8 @@ State: paths.SCENES (~/.local/state/openaurum/scenes.json)
   active    scenes drive the keyboard (CustomLightning)
   base      scene name        paint  {key: color} for "paint" (my painting)
   overlays  [names] on now    prev   effect to go back to when nothing is shown
-  auto      {wallpaper, colemak, game, screen}: which events may take over
+  auto      {wallpaper, colemak, game, screen, bar}: which events may take over
+            (bar: the volume/brightness bar of openaurum.alerts)
   cave_prev {mode, static}: what Cave Mode replaced (see _cave)
   brightness 0-10 (10 = the colors as they are)
 
@@ -48,7 +49,7 @@ GEO = kb.geometry()
 DEFAULT = {
     "active": False, "base": "theme-gradient", "paint": {}, "overlays": [], "prev": None,
     "cave_prev": None, "brightness": kb.MONO_STEPS,
-    "auto": {"wallpaper": True, "colemak": True, "game": True, "screen": True},
+    "auto": {"wallpaper": True, "colemak": True, "game": True, "screen": True, "bar": True},
 }
 
 

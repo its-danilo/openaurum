@@ -17,10 +17,11 @@ DESKTOP=$LOCAL/share/applications/$APP_ID.desktop
 ICON=$LOCAL/share/icons/hicolor/scalable/apps/$APP_ID.svg
 UNIT_DIR=${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user
 UNIT=$UNIT_DIR/openaurum-heatmap.service
+NOTIFY_UNIT=$UNIT_DIR/openaurum-notify.service
 RULE=/etc/udev/rules.d/70-openaurum.rules
 STATE=${XDG_STATE_HOME:-$HOME/.local/state}/openaurum
 CONFIG=${XDG_CONFIG_HOME:-$HOME/.config}/openaurum
-PROGRAMS=(openaurum openaurum-cli openaurum-heatmap)
+PROGRAMS=(openaurum openaurum-cli openaurum-heatmap openaurum-notify)
 
 bold=$'\e[1m' green=$'\e[32m' yellow=$'\e[33m' red=$'\e[31m' reset=$'\e[0m'
 [[ -t 1 ]] || bold='' green='' yellow='' red='' reset=''
@@ -132,12 +133,13 @@ do_install() {
   install -Dm644 "$SRC/data/$APP_ID.svg" "$ICON"
   ok "atalho no menu de aplicativos (OpenAurum)"
   install -Dm644 "$SRC/data/openaurum-heatmap.service" "$UNIT"
+  install -Dm644 "$SRC/data/openaurum-notify.service" "$NOTIFY_UNIT"
   if command -v systemctl >/dev/null; then
     systemctl --user daemon-reload 2>/dev/null || true
-    # already counting (an update): restart it on the new code
-    systemctl --user try-restart openaurum-heatmap.service 2>/dev/null || true
+    # already running (an update): restart them on the new code
+    systemctl --user try-restart openaurum-heatmap.service openaurum-notify.service 2>/dev/null || true
   fi
-  ok "serviço do mapa de calor instalado (desligado; o app liga quando você quiser)"
+  ok "serviços do mapa de calor e do aviso de mensagens instalados (desligados; o app liga quando você quiser)"
   migrate_calos
 
   if (( udev )); then
@@ -160,13 +162,13 @@ do_install() {
 do_uninstall() {
   step "Removendo o OpenAurum"
   if command -v systemctl >/dev/null; then
-    systemctl --user disable --now openaurum-heatmap.service 2>/dev/null || true
+    systemctl --user disable --now openaurum-heatmap.service openaurum-notify.service 2>/dev/null || true
   fi
-  rm -f "$UNIT" "$DESKTOP" "$ICON"
+  rm -f "$UNIT" "$NOTIFY_UNIT" "$DESKTOP" "$ICON"
   for p in "${PROGRAMS[@]}"; do rm -f "$BIN/$p"; done
   rm -rf "$SHARE"
   command -v systemctl >/dev/null && systemctl --user daemon-reload 2>/dev/null || true
-  ok "programas, biblioteca, atalho, ícone e serviço removidos"
+  ok "programas, biblioteca, atalho, ícone e serviços removidos"
   if [[ -f $RULE ]]; then
     echo "Removendo a regra udev (pede a senha do sudo):"
     sudo rm -f "$RULE" && sudo udevadm control --reload-rules && ok "regra udev removida"

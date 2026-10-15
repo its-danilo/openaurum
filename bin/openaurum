@@ -36,6 +36,7 @@ from gi.repository import Adw, Gdk, Gio, GLib, GObject, Gtk, Pango  # noqa: E402
 APP_ID = "io.github.its_danilo.OpenAurum"
 DEBOUNCE_MS = 120
 POLL_S = 2
+NOTIFY_UNIT = "openaurum-notify.service"
 BLACK = "#000000"
 
 
@@ -495,6 +496,9 @@ class Window(Adw.ApplicationWindow):
         self.title = Adw.WindowTitle(title="OpenAurum", subtitle="Pichau Aurum V60")
         self.views = Adw.ViewStack()
         header.set_title_widget(Adw.ViewSwitcher(stack=self.views, policy=Adw.ViewSwitcherPolicy.WIDE))
+        about = Gtk.Button(icon_name="help-about-symbolic", tooltip_text="Sobre")
+        about.connect("clicked", lambda *_: self.about())
+        header.pack_end(about)
         view = Adw.ToolbarView()
         view.add_top_bar(header)
         view.set_content(self.toasts)
@@ -627,6 +631,21 @@ class Window(Adw.ApplicationWindow):
             self.swatches.remove(child)
         for name, c in theme_colors():
             self.swatches.append(Swatch(name, c, self.on_swatch))
+
+    def about(self):
+        info = self.talk(lambda k: k.info())
+        props = dict(
+            application_name="OpenAurum", application_icon=APP_ID, developer_name="Danilo",
+            website="https://github.com/its-danilo/openaurum", license_type=Gtk.License.GPL_3_0,
+            comments="Iluminação do Pichau Aurum V60 no Linux. Projeto não oficial, sem vínculo "
+                     "com a Pichau.\n\n"
+                     + (f"Teclado conectado: firmware {info['firmware']}.\n" if info else "")
+                     + "Não atualize o firmware pelo app da Pichau: a versão 1.1.0 oferece gravar "
+                       "no V60 um arquivo com nome de outro modelo (AK110M_UK_V101.bin).")
+        if hasattr(Adw, "AboutDialog"):  # libadwaita 1.5
+            Adw.AboutDialog(**props).present(self)
+        else:
+            Adw.AboutWindow(transient_for=self, modal=True, **props).present()
 
     # --- keyboard -------------------------------------------------------------
 
@@ -870,6 +889,9 @@ class ScenesPage(Adw.PreferencesPage):
         ("screen", "Modo Cave",
          "Vermelho bem escuro (#100000); o Night não mexe no teclado",
          "«openaurum-cli screen cave|normal»: vermelho bem escuro"),
+        ("bar", "Barra de volume e brilho",
+         "SUPER+SHIFT ou SUPER+CTRL com = e −: a fileira dos números mostra o nível por 2 s",
+         "«openaurum-cli bar volume|brightness 0-100»: a fileira dos números mostra o nível por 2 s"),
     ]
 
     def __init__(self, win):
@@ -927,6 +949,12 @@ class ScenesPage(Adw.PreferencesPage):
             row.connect("notify::active", lambda r, _, k=key: self.on_auto(k, r.get_active()))
             auto.add(row)
             self.autos[key] = row
+        self.messages = Adw.SwitchRow(
+            title="Avisar mensagens no Espaço",
+            subtitle="ZapZap, Vesktop, AyuGram e outros: o Espaço acende 5 s na cor do app "
+                     "(nada no Não perturbe; o texto nunca é lido)")
+        self.messages.connect("notify::active", self.on_messages)
+        auto.add(self.messages)
         self.add(auto)
 
         end = Adw.PreferencesGroup()
@@ -960,6 +988,7 @@ class ScenesPage(Adw.PreferencesPage):
         for key, row in self.autos.items():
             row.set_active(bool(st["auto"].get(key)))
         self.collect.set_active(self.service("is-enabled") == 0)
+        self.messages.set_active(self.service("is-enabled", unit=NOTIFY_UNIT) == 0)
         self.syncing = False
         self.stop_row.set_sensitive(st["active"] or bool(st["overlays"]))
         heat = scenes.load_heat()
@@ -971,8 +1000,10 @@ class ScenesPage(Adw.PreferencesPage):
         else:
             self.collect.set_subtitle("Nada contado ainda (salva a cada 10 s)")
         today, total = kb.writes()
+        budget = integrations.event_budget()
+        alerts = f"{kb.event_writes()} de {budget}" if budget else f"{kb.event_writes()}"
         self.writes.set_label(
-            f"{today} gravações por tecla hoje · {total} no total\n"
+            f"{today} gravações hoje ({alerts} dos avisos) · {total} no total\n"
             "As cores por tecla ficam guardadas no teclado: as cenas só regravam o que muda, "
             "nunca em animação.")
 
@@ -999,10 +1030,13 @@ class ScenesPage(Adw.PreferencesPage):
             self.after(self.win.talk(lambda k: scenes.refresh(k)))
 
     @staticmethod
-    def service(*cmd):
+    def service(*cmd, unit="openaurum-heatmap.service"):
         import subprocess
-        return subprocess.run(["systemctl", "--user", *cmd, "openaurum-heatmap.service"],
-                              capture_output=True).returncode
+        return subprocess.run(["systemctl", "--user", *cmd, unit], capture_output=True).returncode
+
+    def on_messages(self, row, _pspec):
+        if not self.syncing:
+            self.service("enable" if row.get_active() else "disable", "--now", unit=NOTIFY_UNIT)
 
     def on_collect(self, row, _pspec):
         if not self.syncing:

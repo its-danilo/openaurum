@@ -8,6 +8,7 @@ Generic Linux: ~/.config/openaurum/config.conf (all keys optional)
   brightness = 10
   speed      = 1
   color      = #00aaff                      # or: rgb
+  event_writes_per_day = 500                # alerts (bar, Space) budget, 0 = no limit
 
 calOS (the author's Hyprland dotfiles, detected by ~/.config/calos/current/theme):
 the palette comes from the theme's waybar.css accent + alacritty colors, the
@@ -157,3 +158,24 @@ def set_screen_mode(mode):
         raise ValueError(f"screen mode {mode!r} ({' / '.join(SCREEN_MODES)})")
     with open(paths.SCREEN, "w") as f:
         f.write(mode + "\n")
+
+
+def do_not_disturb():
+    """Do Not Disturb in the notification daemon (mako or swaync), else False."""
+    for cmd, on in ((["makoctl", "mode"], lambda out: "do-not-disturb" in out.split()),
+                    (["swaync-client", "-D"], lambda out: out.strip() == "true")):
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=2)
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        if r.returncode == 0:
+            return on(r.stdout)
+    return False
+
+
+def event_budget():
+    """event_writes_per_day from config.conf (500; 0 = no limit)."""
+    try:
+        return max(0, int(config().get("event_writes_per_day", 500)))
+    except ValueError:
+        return 500

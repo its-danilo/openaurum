@@ -14,7 +14,11 @@ Scenes (per-key pictures, CustomLightning):
   openaurum-cli overlay colemak|game|heat on|off [--auto]
   openaurum-cli screen normal|night|cave    # Cave: dark red; Night = normal here
   openaurum-cli event wallpaper|theme|screen  # for hooks: re-render if a scene depends on it
-  openaurum-cli writes                      # per-key writes today / total
+  openaurum-cli writes                      # flash writes today / total
+
+Alerts over a scene (openaurum.alerts; nothing over a built-in effect or in Cave):
+  openaurum-cli bar volume|brightness 0-100 # number row as a bar, gone after 2 s
+  openaurum-cli notify [--app NAME | --color '#rrggbb']  # Space lit for 5 s
 
 Theme: `mode / brightness / speed / color` from ~/.config/openaurum/config.conf
 (and the calOS theme's keyboard.conf), else the palette's accent at full
@@ -33,7 +37,7 @@ for _p in (_root, os.path.join(_root, "share", "openaurum")):
     if os.path.isfile(os.path.join(_p, "openaurum", "protocol.py")):
         sys.path.insert(0, _p)
         break
-from openaurum import integrations, paths  # noqa: E402
+from openaurum import alerts, integrations, paths  # noqa: E402
 from openaurum import protocol as kb  # noqa: E402
 from openaurum import scenes  # noqa: E402
 
@@ -64,6 +68,12 @@ def main():
     ov.add_argument("name", choices=list(scenes.OVERLAYS))
     ov.add_argument("state", choices=["on", "off"])
     ov.add_argument("--auto", action="store_true", help="from a hook: obey the app's Automatic switches")
+    b = sub.add_parser("bar")
+    b.add_argument("kind", choices=["volume", "brightness"])
+    b.add_argument("value", type=int, metavar="0-100")
+    nt = sub.add_parser("notify")
+    nt.add_argument("--app", help="app name: messengers get their own color")
+    nt.add_argument("--color", metavar="#rrggbb")
     ev = sub.add_parser("event")
     ev.add_argument("what", choices=["wallpaper", "theme", "screen"])
     scr = sub.add_parser("screen")
@@ -80,7 +90,9 @@ def main():
 
     if args.cmd == "writes":
         today, total = kb.writes()
-        print(f"per-key writes: {today} today, {total} total")
+        budget = integrations.event_budget()
+        print(f"flash writes: {today} today ({kb.event_writes()} from alerts, "
+              f"limit {budget or 'none'}), {total} total")
         return
     if args.cmd == "scene" and args.name == "list":
         for name, (title, group, _) in scenes.SCENES.items():
@@ -101,6 +113,12 @@ def main():
             return
         if args.cmd == "event":
             scenes.event(args.what)
+            return
+        if args.cmd == "bar":
+            alerts.bar(args.kind, args.value)
+            return
+        if args.cmd == "notify":
+            alerts.notify(args.color or alerts.app_color(args.app))
             return
         st = scenes.load()
         if args.cmd == "theme" and st["cave_prev"]:
@@ -148,7 +166,7 @@ def main():
                 k.apply(mode=args.mode, brightness=args.brightness, speed=args.speed,
                         color=args.color, rgb=args.rgb)
     except kb.NotFound:
-        if args.cmd in ("theme", "event", "screen") or getattr(args, "auto", False):
+        if args.cmd in ("theme", "event", "screen", "bar", "notify") or getattr(args, "auto", False):
             return  # not plugged in: nothing to do
         die("Aurum V60 not found")
     except PermissionError as e:

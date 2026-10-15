@@ -26,6 +26,8 @@ Os scripts do calOS chamam o CLI em segundo plano (`&>/dev/null &`), por caminho
 | `calos-toggle-gamemode` (CTRL+SUPER+G) | `~/.local/bin/openaurum-cli overlay game on\|off --auto` |
 | `calos-toggle-layout` (SUPER+SHIFT+SPACE) | `~/.local/bin/openaurum-cli overlay colemak on\|off --auto` |
 | `calos-screen-mode` (Night / Cave) | `~/.local/bin/openaurum-cli screen <modo>` |
+| `~/.config/hypr/scripts/media-keys.sh` (SUPER+SHIFT + `=`/`-`, teclas de volume) | `~/.local/bin/openaurum-cli bar volume <0-100>` |
+| `calos-brightness up\|down` (SUPER+CTRL + `=`/`-`, teclas de brilho) | `~/.local/bin/openaurum-cli bar brightness <0-100>` |
 | `calos-menu` → Style → Keyboard RGB | `~/.local/bin/openaurum` |
 
 E a regra de janela no Hyprland (`windowrules.lua`), para o app abrir flutuando:

@@ -11,9 +11,11 @@ RUNTIME_DIR = os.environ.get("XDG_RUNTIME_DIR") or "/tmp"
 
 SCENES = os.path.join(STATE_DIR, "scenes.json")    # scenes, overlays, scene brightness
 LEVELS = os.path.join(STATE_DIR, "levels.json")    # one-color level + picked color per mode
-WRITES = os.path.join(STATE_DIR, "writes.json")    # per-key writes counter (flash wear)
+WRITES = os.path.join(STATE_DIR, "writes.json")    # flash writes counter (wear, alerts budget)
 HEAT = os.path.join(STATE_DIR, "heat.json")        # typing heatmap counts
 LOG = os.path.join(STATE_DIR, "openaurum.log")     # CLI errors (hooks discard output)
 CONFIG = os.path.join(CONFIG_DIR, "config.conf")   # optional, see README
 LOCK = os.path.join(RUNTIME_DIR, "openaurum.lock")
 SCREEN = os.path.join(RUNTIME_DIR, "openaurum-screen")  # normal / night / cave
+ALERTS = os.path.join(RUNTIME_DIR, "openaurum-alerts.json")  # live bar / Space light
+ALERTS_LOCK = os.path.join(RUNTIME_DIR, "openaurum-alerts.lock")  # the one drawing them

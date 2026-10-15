@@ -40,6 +40,7 @@
 - **Cenas**: mais de 40 desenhos prontos para as teclas, em grupos: tema, wallpaper, arte, games, espaço, estações, Brasil e mundo, noturnas. Também guarda a sua própria pintura. As cenas têm **brilho de 0 a 10**.
 - **Overlays automáticos**: zonas de cada dedo do Colemak-DH, destaque de WASD no modo de jogo e **mapa de calor** da digitação, que conta só quantas vezes cada tecla foi apertada (nunca o texto).
 - **Modo Cave**: troca o teclado para um vermelho bem escuro e depois devolve tudo como estava (o *Night* não mexe no teclado).
+- **Avisos por cima da cena**: a fileira dos números vira uma **barra de volume ou brilho** por 2 s, e o **Espaço acende na cor do app** quando chega uma mensagem (ZapZap, Vesktop, AyuGram e outros), por 5 s. Só com uma cena ativa, nunca no Modo Cave nem no *Não perturbe*, e com um limite diário de gravações.
 - **Linha de comando completa** (`openaurum-cli`) para scripts, atalhos e troca de tema.
 - **Cuidado com a memória do teclado**: só grava as teclas que mudaram, e mostra quantas gravações foram feitas (veja [Segurança](#segurança)).
 
@@ -85,10 +86,11 @@ Tudo fica na sua pasta de usuário, e o `sudo` é usado **só** para a regra de 
 
 | Arquivo | Para quê |
 |---|---|
-| `~/.local/bin/openaurum`, `openaurum-cli`, `openaurum-heatmap` | os programas |
+| `~/.local/bin/openaurum`, `openaurum-cli`, `openaurum-heatmap`, `openaurum-notify` | os programas |
 | `~/.local/share/openaurum/` | a biblioteca Python |
 | `~/.local/share/applications/io.github.its_danilo.OpenAurum.desktop` + ícone | atalho no menu |
 | `~/.config/systemd/user/openaurum-heatmap.service` | mapa de calor (vem **desligado**) |
+| `~/.config/systemd/user/openaurum-notify.service` | aviso de mensagens no Espaço (vem **desligado**) |
 | `/etc/udev/rules.d/70-openaurum.rules` (**sudo**) | deixa o seu usuário falar com o teclado, sem rodar nada como root |
 
 Outras opções:
@@ -115,7 +117,8 @@ Abra **OpenAurum** pelo menu (ou rode `openaurum`). São duas abas:
 - **Brilho das cenas** (0-10), gravado quando você solta o controle.
 - Clique numa cena para aplicá-la. *Minha pintura* guarda o que você pintou à mão.
 - **Mapa de calor**: *Contar teclas digitadas* liga a contagem; *Mostrar no teclado* pinta as teclas do azul (pouco usada) ao vermelho (muito usada).
-- **Automático**: escolha que eventos podem mudar o teclado (wallpaper, Colemak, modo de jogo, modos de tela).
+- **Automático**: escolha que eventos podem mudar o teclado (wallpaper, Colemak, modo de jogo, modos de tela, barra de volume e brilho). *Avisar mensagens no Espaço* liga o serviço que escuta as notificações (só o nome do app e a categoria, nunca o texto).
+- O botão **Sobre** (no topo) mostra o firmware do teclado.
 - **Desligar cenas** volta ao efeito que estava antes.
 
 ## Como usar: linha de comando
@@ -137,7 +140,9 @@ openaurum-cli overlay game on                      # WASD e companhia acesos
 openaurum-cli overlay colemak on                   # zonas dos dedos (Colemak-DH)
 openaurum-cli overlay heat on                      # mapa de calor por cima da cena
 openaurum-cli screen cave                          # normal | night | cave (night = normal no teclado)
-openaurum-cli writes                               # gravações por tecla (hoje / total)
+openaurum-cli bar volume 45                        # barra na fileira dos números (volume | brightness, 0-100)
+openaurum-cli notify --app ZapZap                  # Espaço na cor do app por 5 s (ou --color '#rrggbb')
+openaurum-cli writes                               # gravações na flash (hoje, dos avisos, total)
 ```
 
 Erros de comandos rodados em segundo plano ficam em `~/.local/state/openaurum/openaurum.log`.
@@ -157,6 +162,9 @@ mode = Static
 brightness = 10
 speed = 1
 color = #00aaff      # ou: rgb
+
+# limite diário de gravações dos avisos (barra, Espaço); 0 = sem limite
+event_writes_per_day = 500
 ```
 
 ## Integração com o seu sistema
@@ -178,7 +186,12 @@ openaurum-cli overlay colemak on --auto  # e: overlay colemak off --auto
 
 # modo escuro total (night não mexe no teclado)
 openaurum-cli screen cave                # night | normal
+
+# depois de mudar o volume ou o brilho da tela (o valor novo, 0-100)
+openaurum-cli bar volume 45              # ou: bar brightness 70
 ```
+
+O aviso de mensagens não precisa de gancho: ele escuta as notificações pelo D-Bus, com qualquer daemon de notificação (`systemctl --user enable --now openaurum-notify`, ou o interruptor no app).
 
 Exemplo no Hyprland (`hyprland.conf`):
 
@@ -202,7 +215,7 @@ O protocolo do teclado não é público. Ele foi **gravado** do app oficial da P
 
 - As cenas **nunca são animadas** pelo PC. Os efeitos animados são os do próprio teclado.
 - Só o que mudou é regravado, em blocos de cerca de 18 teclas por comando (a cena inteira cabe em 9 gravações), e os controles gravam **quando você solta** (não enquanto arrasta).
-- O app mostra o contador de gravações (`openaurum-cli writes` também).
+- O app mostra o contador de gravações (`openaurum-cli writes` também). Os avisos (barra, Espaço) têm um **limite diário** (500, ajustável em `event_writes_per_day`): passando dele, eles param até o dia seguinte, e o que você faz no app continua funcionando.
 
 Os detalhes técnicos estão em [docs/PROTOCOL.md](docs/PROTOCOL.md).
 
@@ -252,11 +265,12 @@ Dá para rodar direto do repositório, sem instalar (só precisa da regra udev):
 openaurum/
   protocol.py      comandos USB, efeitos, níveis de brilho, mapa das teclas
   scenes.py        cenas, overlays, modos de tela, brilho das cenas
+  alerts.py        avisos por cima da cena: barra de volume/brilho, Espaço nas mensagens
   art.py           as cenas artísticas
-  integrations.py  paleta, wallpaper e modo de tela (config.conf / calOS)
+  integrations.py  paleta, wallpaper, modo de tela, Não perturbe (config.conf / calOS)
   paths.py         onde cada arquivo de estado fica
-bin/               app (GTK 4), CLI e mapa de calor
-data/              regra udev, atalho, ícone e serviço
+bin/               app (GTK 4), CLI, mapa de calor e aviso de mensagens
+data/              regra udev, atalho, ícone e serviços
 docs/              protocolo e integração com o calOS
 ```
 
@@ -278,6 +292,7 @@ Contribuições são bem-vindas. Por favor, **não** envie pull requests com com
 - 40+ ready-made per-key scenes with their own brightness
 - automatic overlays (Colemak-DH finger zones, game mode, typing heatmap)
 - Cave screen mode (dark red keyboard, restored afterwards)
+- alerts over a scene: a volume/brightness bar on the number row (`openaurum-cli bar volume 45`) and Space lit in the app's color when a message arrives (`openaurum-notify`, any notification daemon; app name and category only, never the text), with a daily write budget (`event_writes_per_day`)
 
 **Install:** get Python 3 + PyGObject + GTK 4 + libadwaita ≥ 1.4 (see the table above), then `git clone https://github.com/its-danilo/openaurum.git && cd openaurum && ./install.sh`. Everything goes to `~/.local`. `sudo` is only used for a udev rule, which gives the logged-in user access to this one device. `./install.sh --uninstall` removes everything.
 

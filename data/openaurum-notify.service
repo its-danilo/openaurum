@@ -1,0 +1,11 @@
+[Unit]
+Description=OpenAurum: acende o Espaço quando chega uma mensagem (só nome do app, sem texto)
+PartOf=graphical-session.target
+
+[Service]
+ExecStart=%h/.local/bin/openaurum-notify
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=graphical-session.target

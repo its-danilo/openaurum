@@ -276,8 +276,16 @@ class Keyboard:
         data = [0x06, 0x0B, 0x0B, 0, 0, 1, 0] + [
             st[k] for k in ("mode", "br", "sp", "x1", "mono", "xx", "h", "s", "v")]
         reply = self.cmd(data, 0x0B)
+        count_writes(1)  # the settings live in flash too
         if list(reply[7:16]) != data[7:16]:
             raise ProtocolError("the keyboard did not accept the settings")
+
+    def info(self):
+        """06 05, what the app reads on connect: firmware 100 on the author's V60."""
+        r = self.cmd([0x06, 0x05], 0x05)
+        b = r[5:43]
+        return dict(version=b[0] | b[1] << 8, pid=b[2] | b[3] << 8,
+                    firmware=b[4] | b[5] << 8, profiles=b[10], layers=b[12])
 
     def table(self):
         """The raw per-key color table: RGB, 3 bytes per matrix index."""
@@ -420,7 +428,9 @@ class Keyboard:
 WRITES = paths.WRITES
 
 
-def count_writes(n):
+def count_writes(n, events=0):
+    """n flash writes (per-key colors or settings); events: how many of
+    today's came from the desktop (openaurum.alerts), for its daily budget."""
     import datetime
     import json
     try:
@@ -430,9 +440,10 @@ def count_writes(n):
         w = {}
     today = datetime.date.today().isoformat()
     if w.get("day") != today:
-        w["day"], w["today"] = today, 0
+        w["day"], w["today"], w["events"] = today, 0, 0
     w["today"] = w.get("today", 0) + n
     w["total"] = w.get("total", 0) + n
+    w["events"] = w.get("events", 0) + events
     os.makedirs(os.path.dirname(WRITES), exist_ok=True)
     with open(WRITES + ".tmp", "w") as f:
         json.dump(w, f)
@@ -449,6 +460,18 @@ def writes():
         return 0, 0
     today = w.get("today", 0) if w.get("day") == datetime.date.today().isoformat() else 0
     return today, w.get("total", 0)
+
+
+def event_writes():
+    """Today's writes from openaurum.alerts (also part of writes()' today)."""
+    import datetime
+    import json
+    try:
+        with open(WRITES) as f:
+            w = json.load(f)
+    except (OSError, ValueError):
+        return 0
+    return w.get("events", 0) if w.get("day") == datetime.date.today().isoformat() else 0
 
 
 def geometry():
