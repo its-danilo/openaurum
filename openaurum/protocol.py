@@ -19,7 +19,7 @@ keyboard:
      MM mode 0-16 (MODES)       BR brightness 0-4     SP speed 0-2 (0 = slowest)
      X1 direction in the app's code (0 left/up, 1 right/down, for Stream and
         UDWave; the app hides the control). The V60 stores it but IGNORES it
-        (tested 2026-10-14). 01 once the app changed something, 03 in factory
+        (0, 1, 2 and 3 tested 2026-10-14). 01 once the app changed something, 03 in factory
         settings
      MO 1 = one color, 0 = RGB  XX 00 whenever the app sets a color (the app's
         code calls it singleColorIndex)
