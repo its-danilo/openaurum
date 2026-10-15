@@ -191,16 +191,17 @@ bind = SUPER CTRL SHIFT, G, exec, openaurum-cli overlay game off --auto
 
 ## Segurança
 
-O protocolo do teclado não é público. Ele foi **gravado** do app oficial da Pichau (Windows), observando o tráfego USB. A regra do projeto é simples:
+O protocolo do teclado não é público. Ele foi **gravado** do app oficial da Pichau (Windows), observando o tráfego USB, e depois conferido na biblioteca de comandos do próprio app (o código JavaScript dele). A regra do projeto é simples:
 
-- **Só são enviados comandos que o app oficial envia**, com valores dentro das faixas que ele usa. Nenhum comando é "adivinhado".
+- **Só são enviados comandos do app oficial** (vistos no tráfego ou no código dele), com valores dentro das faixas que ele usa, e cada um testado no teclado. Nenhum comando é "adivinhado".
 - **Nunca** são enviados o reset de fábrica nem a atualização de firmware.
+- **Não atualize o firmware pelo app da Pichau.** O app 1.1.0 oferece trocar o firmware 100 do V60 por um arquivo com nome de outro modelo (`AK110M_UK_V101.bin`), e há [relato de um V60 que parou de funcionar depois de uma atualização](https://www.reclameaqui.com.br/pichau-informatica/solicitacao-de-ferramenta-para-regravar-firmware-de-teclado-pichau-aurum-v60-apos-falha-na-atualizacao_I3RTQC9g0JBthWNK/).
 - Os comandos só vão para a interface de iluminação do `36ae:fe9c`, e a regra udev só libera esse aparelho.
 
 **Sobre a memória do teclado:** as cores de cada tecla e os ajustes ficam guardados na memória flash do teclado (sobrevivem a desconectar o cabo). Memória flash aguenta muitas, mas não infinitas, regravações. Por isso:
 
 - As cenas **nunca são animadas** pelo PC. Os efeitos animados são os do próprio teclado.
-- Só as teclas que mudaram são regravadas, e os controles gravam **quando você solta** (não enquanto arrasta).
+- Só o que mudou é regravado, em blocos de cerca de 18 teclas por comando (a cena inteira cabe em 9 gravações), e os controles gravam **quando você solta** (não enquanto arrasta).
 - O app mostra o contador de gravações (`openaurum-cli writes` também).
 
 Os detalhes técnicos estão em [docs/PROTOCOL.md](docs/PROTOCOL.md).
@@ -259,7 +260,7 @@ data/              regra udev, atalho, ícone e serviço
 docs/              protocolo e integração com o calOS
 ```
 
-Contribuições são bem-vindas. Por favor, **não** envie pull requests com comandos USB que não tenham sido observados no app oficial (veja [Segurança](#segurança)).
+Contribuições são bem-vindas. Por favor, **não** envie pull requests com comandos USB que não venham do app oficial (do tráfego ou do código dele) ou que não tenham sido testados no teclado (veja [Segurança](#segurança)).
 
 ## Licença
 
@@ -280,6 +281,6 @@ Contribuições são bem-vindas. Por favor, **não** envie pull requests com com
 
 **Install:** get Python 3 + PyGObject + GTK 4 + libadwaita ≥ 1.4 (see the table above), then `git clone https://github.com/its-danilo/openaurum.git && cd openaurum && ./install.sh`. Everything goes to `~/.local`. `sudo` is only used for a udev rule, which gives the logged-in user access to this one device. `./install.sh --uninstall` removes everything.
 
-**Safety:** the protocol was recorded from the official Windows app, and only the commands that app sends are used. Factory reset and firmware update are never sent. Per-key colors live in the keyboard's flash, so nothing is animated from the PC and only changed keys are rewritten. See [docs/PROTOCOL.md](docs/PROTOCOL.md).
+**Safety:** the protocol was recorded from the official Windows app and checked against the app's own command library (its JavaScript). Only commands from that app are used, each one tested on the keyboard. Factory reset and firmware update are never sent; don't update the firmware with the Pichau app either (version 1.1.0 offers to flash a file named after another model, `AK110M_UK_V101.bin`). Per-key colors live in the keyboard's flash, so nothing is animated from the PC and only what changed is rewritten, about 18 keys per command. See [docs/PROTOCOL.md](docs/PROTOCOL.md).
 
 License: GPL-3.0.

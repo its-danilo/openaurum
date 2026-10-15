@@ -1,10 +1,15 @@
 """Pichau Aurum V60 (36ae:fe9c, SDCINNOVATION) lighting protocol, shared by
 openaurum-cli and the openaurum app. docs/PROTOCOL.md has the long version.
 
-Recorded from the official Pichau app with usbmon on 2026-09-18. Only the
-commands the app itself sends are used, with values inside the ranges it sends:
+Recorded from the official Pichau app with usbmon on 2026-09-18, then checked
+against the app's own command library (its JavaScript, AURUM V60 1.1.0) on
+2026-10-14. Only commands from that library are used, each one tested on the
+keyboard:
 
-  06 0a                         -> current mode at byte 7 (reply aa 0a ...; the
+  06 05                         -> keyboard info (reply aa 05 0e 00 00 + version,
+                                   pid, firmware (100 here), mode, link, battery,
+                                   charge, profiles, profile, layers, layer)
+  06 0a                        -> current mode at byte 7 (reply aa 0a ...; the
                                    reply is sometimes one byte shorter, so the
                                    settings come from 06 16)
   06 16 00 00 00 01 00 MM       -> stored settings of mode MM (reply aa 16 0b ...)
@@ -12,8 +17,12 @@ commands the app itself sends are used, with values inside the ranges it sends:
                                 -> switch to mode MM with these settings; the
                                    keyboard echoes them (aa 0b 01 ...)
      MM mode 0-16 (MODES)       BR brightness 0-4     SP speed 0-2 (0 = slowest)
-     X1 01 once the app changed something (03 in factory settings)
-     MO 1 = one color, 0 = RGB  XX 00 whenever the app sets a color
+     X1 direction in the app's code (0 left/up, 1 right/down, for Stream and
+        UDWave; the app hides the control). The V60 stores it but IGNORES it
+        (tested 2026-10-14). 01 once the app changed something, 03 in factory
+        settings
+     MO 1 = one color, 0 = RGB  XX 00 whenever the app sets a color (the app's
+        code calls it singleColorIndex)
      HH SS VV color as HSV, each 0-255 (green = 55 ff ff)
      In one-color mode the firmware IGNORES BR (so did the Pichau app's slider)
      and lights the color at its V; with RGB BR works (0 = off). apply() turns
@@ -27,6 +36,12 @@ commands the app itself sends are used, with values inside the ranges it sends:
   06 14 03 LL HH 00 00 00 RR GG BB
                                 -> color of one key (CustomLightning), address
                                    = 3 * matrix index, plain RGB; echoed aa 14 01 ...
+  06 12 3b LL HH 00 00 00 + 0x38 bytes
+                                -> 0x38 bytes of the per-key table at once (the
+                                   app's setKeyColorsInfos, which it never calls);
+                                   reply aa 12 01 LL HH. The firmware also writes
+                                   the 3 bytes after them with junk (0x3b = 0x38
+                                   + 3): push() covers them
   06 08 3a LL HH                -> keymap (4 bytes per matrix index: 20 00 <HID
                                    usage> 00); KEY_INDEX below was read from it
   06 0f ff = factory reset, and firmware update: never sent from here
@@ -157,6 +172,9 @@ KEY_INDEX = {
     "RALT": 115, "COMP": 116, "RCTL": 117, "FN": 118,
 }
 COLOR_TABLE = range(0, 0x188, 0x38)  # the reads the app makes
+# 06 12 chunks; one at 0x150 would spill its junk past the table, so the keys
+# from there on (RALT, COMP, RCTL, FN) go one by one
+BULK = range(0, 0x150, 0x38)
 
 
 class NotFound(Exception):
@@ -241,7 +259,7 @@ class Keyboard:
                 if not select.select([self.fd], [], [], 0.5)[0]:
                     break
                 reply = os.read(self.fd, REPORT)
-                if reply[:2] == bytes([0xAA, expect]) and (expect != 0x14 or reply[3:5] == bytes(data[3:5])):
+                if reply[:2] == bytes([0xAA, expect]) and (expect not in (0x12, 0x14) or reply[3:5] == bytes(data[3:5])):
                     return reply
             self.drain()
         raise ProtocolError(f"no reply from the keyboard to {data[1]:02x}")
@@ -261,15 +279,24 @@ class Keyboard:
         if list(reply[7:16]) != data[7:16]:
             raise ProtocolError("the keyboard did not accept the settings")
 
-    def key_colors(self):
-        """{key: '#rrggbb'} as stored in the keyboard (CustomLightning)."""
+    def table(self):
+        """The raw per-key color table: RGB, 3 bytes per matrix index."""
         table = b""
         for a in COLOR_TABLE:
             r = self.cmd([0x06, 0x13, 0x3A, a & 0xFF, a >> 8], 0x13)
             if r[3] != a & 0xFF or r[4] != a >> 8:
                 raise ProtocolError("color table reply out of order")
             table += bytes(r[8:8 + 0x38])
+        return table
+
+    def key_colors(self, table=None):
+        """{key: '#rrggbb'} as stored in the keyboard (CustomLightning)."""
+        table = table or self.table()
         return {k: "#" + table[3 * i:3 * i + 3].hex() for k, i in KEY_INDEX.items()}
+
+    def set_chunk(self, addr, data):
+        """0x38 bytes of the color table in one write (and 3 junk bytes after)."""
+        self.cmd([0x06, 0x12, 0x3B, addr & 0xFF, addr >> 8, 0, 0, 0] + list(data), 0x12)
 
     def set_key(self, key, color):
         addr = 3 * KEY_INDEX[key]
@@ -282,14 +309,36 @@ class Keyboard:
             raise ProtocolError(f"the keyboard did not accept the color of {key}")
 
     def push(self, colors):
-        """Write only the keys whose color differs from what the keyboard holds,
-        and count the writes (WRITES). The per-key table most likely lives in
-        flash (it survived a factory reset): keep this for events, not animation."""
+        """Write only what differs from what the keyboard holds, and count the
+        writes (WRITES). Each changed 0x38-byte chunk goes in one 06 12, in
+        order, so a chunk's 3 junk bytes land on the next chunk; when that one
+        isn't written, the keys under the junk are put back one by one. The keys
+        past BULK and anything the read back finds wrong also go one by one.
+        The per-key table most likely lives in flash (it survived a factory
+        reset): keep this for events, not animation."""
         want = {k: c.lower() for k, c in colors.items() if k in KEY_INDEX}
+        table = self.table()
+        target = dict(self.key_colors(table), **want)
+        new = bytearray(table)
+        for k, c in want.items():
+            new[3 * KEY_INDEX[k]:3 * KEY_INDEX[k] + 3] = bytes.fromhex(c.lstrip("#"))
+        chunks = [a for a in BULK if new[a:a + 0x38] != table[a:a + 0x38]]
+        junk = {i for a in chunks if a + 0x38 not in chunks
+                for i in range((a + 0x38) // 3, (a + 0x3A) // 3 + 1)}
         written = 0
-        for _ in range(3):  # write, read back, rewrite what didn't take
+        try:
+            for a in chunks:
+                self.set_chunk(a, new[a:a + 0x38])
+                written += 1
+            for key, i in KEY_INDEX.items():
+                if i in junk:
+                    self.set_key(key, target[key])
+                    written += 1
+        except ProtocolError:
+            pass  # the loop below writes key by key
+        for _ in range(3):  # read back, rewrite what didn't take
             have = self.key_colors()
-            todo = {k: c for k, c in want.items() if have.get(k) != c}
+            todo = {k: c for k, c in target.items() if have.get(k) != c}
             if not todo:
                 break
             for key, c in todo.items():
