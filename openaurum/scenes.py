@@ -3,7 +3,7 @@ written through CustomLightning (protocol.Keyboard.push), plus overlays
 that react to the system (Colemak-DH, game mode, Cave, typing heatmap).
 
 Layers, bottom to top:
-  base scene (the user's pick)  <  colemak / game / heat overlays  <  brightness
+  base scene (the user's pick)  <  colemak / game / heat / glow overlays  <  brightness
 
 Brightness (0-10) is done here, by dimming every key's color: CustomLightning
 ignores the keyboard's own BR byte. The state keeps the full colors (paint too);
@@ -354,10 +354,30 @@ def o_heat(base):
     return {k: HEAT_STEPS[heat_level(heat.get(k, 0), top)] for k in GEO}
 
 
+def load_glow():
+    """Keys and color from paths.GLOW (openaurum-cli glow); none when the file is gone."""
+    try:
+        with open(paths.GLOW) as f:
+            g = json.load(f)
+        return [k for k in g.get("keys", []) if k in GEO], g.get("color")
+    except (OSError, ValueError, AttributeError):
+        return [], None
+
+
+def o_glow(base):
+    """Keys another app keeps lit (InputForge: the hotkey of what is running)."""
+    keys, color = load_glow()
+    out = dict(base)
+    for k in keys:
+        out[k] = color or integrations.theme_color()
+    return out
+
+
 OVERLAYS = {  # name: (title, fn); later in this dict = on top
     "colemak": ("Colemak que ensina", o_colemak),
     "game": ("Modo de jogo", o_game),
     "heat": ("Mapa de calor", o_heat),
+    "glow": ("Teclas de outros apps", o_glow),
 }
 
 

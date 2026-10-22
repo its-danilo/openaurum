@@ -142,6 +142,7 @@ openaurum-cli overlay heat on                      # mapa de calor por cima da c
 openaurum-cli screen cave                          # normal | night | cave (night = normal no teclado)
 openaurum-cli bar volume 45                        # barra na fileira dos números (volume | brightness, 0-100)
 openaurum-cli notify --app ZapZap                  # Espaço na cor do app por 5 s (ou --color '#rrggbb')
+openaurum-cli glow AE08 AD02                       # teclas acesas até `glow off` (outros apps; InputForge usa)
 openaurum-cli writes                               # gravações na flash (hoje, dos avisos, total)
 ```
 

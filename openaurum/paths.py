@@ -19,3 +19,4 @@ LOCK = os.path.join(RUNTIME_DIR, "openaurum.lock")
 SCREEN = os.path.join(RUNTIME_DIR, "openaurum-screen")  # normal / night / cave
 ALERTS = os.path.join(RUNTIME_DIR, "openaurum-alerts.json")  # live bar / Space light
 ALERTS_LOCK = os.path.join(RUNTIME_DIR, "openaurum-alerts.lock")  # the one drawing them
+GLOW = os.path.join(RUNTIME_DIR, "openaurum-glow.json")  # keys other apps keep lit (glow)

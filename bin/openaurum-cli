@@ -19,6 +19,7 @@ Scenes (per-key pictures, CustomLightning):
 Alerts over a scene (openaurum.alerts; nothing over a built-in effect or in Cave):
   openaurum-cli bar volume|brightness 0-100 # number row as a bar, gone after 2 s
   openaurum-cli notify [--app NAME | --color '#rrggbb']  # Space lit for 5 s
+  openaurum-cli glow KEY... [--color '#rrggbb']  # keys (xkb names: AE08) lit until `glow off`
 
 Theme: `mode / brightness / speed / color` from ~/.config/openaurum/config.conf
 (and the calOS theme's keyboard.conf), else the palette's accent at full
@@ -74,6 +75,9 @@ def main():
     nt = sub.add_parser("notify")
     nt.add_argument("--app", help="app name: messengers get their own color")
     nt.add_argument("--color", metavar="#rrggbb")
+    gl = sub.add_parser("glow")
+    gl.add_argument("keys", nargs="+", metavar="KEY", help="xkb key names (AE08, AD02...) or `off`")
+    gl.add_argument("--color", metavar="#rrggbb")
     ev = sub.add_parser("event")
     ev.add_argument("what", choices=["wallpaper", "theme", "screen"])
     scr = sub.add_parser("screen")
@@ -119,6 +123,9 @@ def main():
             return
         if args.cmd == "notify":
             alerts.notify(args.color or alerts.app_color(args.app))
+            return
+        if args.cmd == "glow":
+            alerts.glow([] if args.keys == ["off"] else args.keys, args.color)
             return
         st = scenes.load()
         if args.cmd == "theme" and st["cave_prev"]:
@@ -166,7 +173,7 @@ def main():
                 k.apply(mode=args.mode, brightness=args.brightness, speed=args.speed,
                         color=args.color, rgb=args.rgb)
     except kb.NotFound:
-        if args.cmd in ("theme", "event", "screen", "bar", "notify") or getattr(args, "auto", False):
+        if args.cmd in ("theme", "event", "screen", "bar", "notify", "glow") or getattr(args, "auto", False):
             return  # not plugged in: nothing to do
         die("Aurum V60 not found")
     except PermissionError as e:

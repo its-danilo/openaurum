@@ -3,6 +3,7 @@ and a light on Space when a message arrives (openaurum-notify).
 
   openaurum-cli bar volume|brightness 0-100   # Esc .. Backspace, gone 2 s after the last call
   openaurum-cli notify [--app NAME | --color '#rrggbb']   # Space, 5 s
+  openaurum-cli glow AE08 [--color '#rrggbb'] | glow off    # until off (other apps)
 
 Only while scenes drive the keyboard (a scene or an overlay in CustomLightning):
 never over a built-in effect, in Cave Mode or with the scenes' brightness at 0.
@@ -94,6 +95,31 @@ def notify(color=None):
         return
     _edit(space={"color": color, "until": time.time() + SPACE_S})
     run()
+
+
+def glow(keys, color=None):
+    """Keep `keys` (xkb names: AE08, AD02...) lit over the scene until glow([]).
+    For other apps (InputForge lights the hotkey of what runs). It's the "glow"
+    overlay, so it stays without a process polling. Like the alerts: only while
+    scenes drive the keyboard; lighting obeys the daily budget, turning off always runs."""
+    keys = [k for k in dict.fromkeys(keys) if k in scenes.GEO]
+    if keys and not _scenes_on():
+        return
+    if keys and (budget := integrations.event_budget()) and kb.event_writes() >= budget:
+        return
+    with scenes._Session() as s:
+        st = s.st
+        if not keys and "glow" not in st["overlays"]:
+            return
+        if keys and s.kb().current_mode() != kb.CUSTOM:
+            return  # the scenes let go of the keyboard meanwhile
+        with open(paths.GLOW + ".tmp", "w") as f:
+            json.dump({"keys": keys, "color": color}, f)
+        os.replace(paths.GLOW + ".tmp", paths.GLOW)
+        st["overlays"] = [o for o in st["overlays"] if o != "glow"] + (["glow"] if keys else [])
+        scenes.save(st)
+        n = scenes._refresh(s)
+        kb.count_writes(0, events=n)
 
 
 def run():
