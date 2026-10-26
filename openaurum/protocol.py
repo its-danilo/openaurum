@@ -362,6 +362,21 @@ class Keyboard:
             self.write({**st, "mono": 1, "xx": 0})
         self.write(st)
 
+    def relight(self, keys=("CAPS", "LWIN")):
+        """CustomLightning only: write `keys` again with the colors the table
+        already holds. The firmware's own indicators (Caps Lock, Fn+Win) leave
+        Caps AND Win dark when one goes off, with their colors still in the
+        table (2026-10-26); rewriting a key lights it again. Selecting the mode
+        again works too, but blinks the whole keyboard. Returns the writes
+        (0, nothing sent, in other modes)."""
+        if self.current_mode() != CUSTOM:
+            return 0
+        have = self.key_colors()
+        for key in keys:
+            self.set_key(key, have[key])
+        count_writes(len(keys))
+        return len(keys)
+
     def state(self):
         st = self.stored(self.current_mode())
         lv, base = level_info(st)

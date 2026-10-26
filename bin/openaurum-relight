@@ -1,0 +1,111 @@
+#!/usr/bin/env python3
+"""OpenAurum: light Caps and Win again after the keyboard's own indicators
+(openaurum-relight.service).
+
+In CustomLightning the firmware draws its indicators itself: Caps Lock on the
+Caps key, the Win lock (Fn+Win) on Win. When one of them goes off it leaves
+BOTH keys dark, although their colors are still in the per-key table (tested
+2026-10-26). Writing the two keys again with those colors lights them
+(protocol.relight, two writes; selecting the mode again blinks every key).
+Caps Lock reaches the PC as an LED change, so this runs it whenever the
+Aurum's Caps Lock LED goes off. Fn+Win sends nothing at all to the PC: after
+unlocking Win, turn Caps Lock on and off.
+
+Nothing in other effects (Cave Mode included). At most once every GAP_S,
+within the daily event-writes budget of openaurum.alerts. Only the LED events
+of the Aurum's keyboard device are used: key presses are ignored.
+
+  openaurum-relight          # what the service runs
+
+Needs python-evdev and the user in the `input` group (reading /dev/input).
+"""
+
+import os
+import select
+import sys
+import time
+
+# the checkout when run from the repository, else where install.sh put the package
+_root = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+for _p in (_root, os.path.join(_root, "share", "openaurum")):
+    if os.path.isfile(os.path.join(_p, "openaurum", "protocol.py")):
+        sys.path.insert(0, _p)
+        break
+from openaurum import integrations  # noqa: E402
+from openaurum import protocol as kb  # noqa: E402
+
+NAME = "SDCINNOVATION Gaming Keyboard"
+SETTLE_S = 0.3  # let the firmware draw first; a quick off/on needs nothing
+GAP_S = 2
+
+
+def log(msg):
+    print(msg, file=sys.stderr, flush=True)
+
+
+def devices(evdev):
+    out = []
+    for path in evdev.list_devices():
+        try:
+            d = evdev.InputDevice(path)
+        except OSError:
+            continue
+        if d.name.startswith(NAME) and evdev.ecodes.EV_LED in d.capabilities():
+            out.append(d)
+        else:
+            d.close()
+    return out
+
+
+def relight():
+    if (budget := integrations.event_budget()) and kb.event_writes() >= budget:
+        log("daily event-writes budget used up: Caps and Win stay dark")
+        return
+    try:
+        with kb.Keyboard() as k:
+            if n := k.relight():
+                kb.count_writes(0, events=n)  # the writes themselves were counted by relight
+    except (kb.NotFound, kb.ProtocolError, OSError) as e:
+        log(f"relight: {e}")
+
+
+def run():
+    try:
+        import evdev
+    except ImportError:
+        log("python-evdev is missing: nothing to do")
+        return
+    caps = evdev.ecodes.LED_CAPSL
+    devs, due, last, told = [], None, 0.0, False
+    while True:
+        if not devs:
+            devs = devices(evdev)
+            if not devs:
+                if not told:
+                    log("Aurum V60 not found (unplugged, or no access to /dev/input: "
+                        "the `input` group); waiting")
+                    told = True
+                time.sleep(5)
+                continue
+            told = False
+        timeout = None if due is None else max(0.0, due - time.monotonic())
+        ready, _, _ = select.select(devs, [], [], timeout)
+        for d in ready:
+            try:
+                for ev in d.read():
+                    if ev.type == evdev.ecodes.EV_LED and ev.code == caps:
+                        # off: relight soon (not before GAP_S after the last); on: the
+                        # firmware draws its indicator, nothing to do until it goes off
+                        due = max(time.monotonic() + SETTLE_S, last + GAP_S) if ev.value == 0 else None
+            except OSError:  # unplugged
+                for x in devs:
+                    x.close()
+                devs, due = [], None
+                break
+        if due is not None and time.monotonic() >= due:
+            due, last = None, time.monotonic()
+            relight()
+
+
+if __name__ == "__main__":
+    run()

@@ -41,6 +41,7 @@
 - **Overlays automáticos**: zonas de cada dedo do Colemak-DH, destaque de WASD no modo de jogo e **mapa de calor** da digitação, que conta só quantas vezes cada tecla foi apertada (nunca o texto).
 - **Modo Cave**: troca o teclado para um vermelho bem escuro e depois devolve tudo como estava (o *Night* não mexe no teclado).
 - **Avisos por cima da cena**: a fileira dos números vira uma **barra de volume ou brilho** por 2 s, e o **Espaço acende na cor do app** quando chega uma mensagem (ZapZap, Vesktop, AyuGram e outros), por 5 s. Só com uma cena ativa, nunca no Modo Cave nem no *Não perturbe*, e com um limite diário de gravações.
+- **Caps e Win sempre acesos**: no CustomLightning, o próprio teclado apaga o Caps e o Win quando o Caps Lock ou a trava do Win (Fn+Win) desliga. O OpenAurum acende os dois de novo depois do Caps Lock. O Fn+Win não avisa o PC: depois dele, ligue e desligue o Caps Lock.
 - **Linha de comando completa** (`openaurum-cli`) para scripts, atalhos e troca de tema.
 - **Cuidado com a memória do teclado**: só grava as teclas que mudaram, e mostra quantas gravações foram feitas (veja [Segurança](#segurança)).
 
@@ -68,7 +69,7 @@ Funciona em qualquer distribuição Linux com **Python 3**, **GTK 4** e **libadw
 | Fedora | `sudo dnf install git python3-gobject gtk4 libadwaita python3-evdev` |
 | openSUSE | `sudo zypper install git python3-gobject-Gdk typelib-1_0-Gtk-4_0 typelib-1_0-Adw-1 python3-evdev` |
 
-O `python-evdev` só é usado pelo mapa de calor. Pode pular se não quiser esse recurso.
+O `python-evdev` só é usado pelo mapa de calor e para reacender Caps e Win depois do Caps Lock. Pode pular se não quiser esses recursos.
 
 **2. Baixar e instalar:**
 
@@ -86,11 +87,12 @@ Tudo fica na sua pasta de usuário, e o `sudo` é usado **só** para a regra de 
 
 | Arquivo | Para quê |
 |---|---|
-| `~/.local/bin/openaurum`, `openaurum-cli`, `openaurum-heatmap`, `openaurum-notify` | os programas |
+| `~/.local/bin/openaurum`, `openaurum-cli`, `openaurum-heatmap`, `openaurum-notify`, `openaurum-relight` | os programas |
 | `~/.local/share/openaurum/` | a biblioteca Python |
 | `~/.local/share/applications/io.github.its_danilo.OpenAurum.desktop` + ícone | atalho no menu |
 | `~/.config/systemd/user/openaurum-heatmap.service` | mapa de calor (vem **desligado**) |
 | `~/.config/systemd/user/openaurum-notify.service` | aviso de mensagens no Espaço (vem **desligado**) |
+| `~/.config/systemd/user/openaurum-relight.service` | reacende Caps e Win depois do Caps Lock (vem **ligado** se o `python-evdev` estiver instalado; uma atualização não religa) |
 | `/etc/udev/rules.d/70-openaurum.rules` (**sudo**) | deixa o seu usuário falar com o teclado, sem rodar nada como root |
 
 Outras opções:
@@ -117,7 +119,7 @@ Abra **OpenAurum** pelo menu (ou rode `openaurum`). São duas abas:
 - **Brilho das cenas** (0-10), gravado quando você solta o controle.
 - Clique numa cena para aplicá-la. *Minha pintura* guarda o que você pintou à mão.
 - **Mapa de calor**: *Contar teclas digitadas* liga a contagem; *Mostrar no teclado* pinta as teclas do azul (pouco usada) ao vermelho (muito usada).
-- **Automático**: escolha que eventos podem mudar o teclado (wallpaper, Colemak, modo de jogo, modos de tela, barra de volume e brilho). *Avisar mensagens no Espaço* liga o serviço que escuta as notificações (só o nome do app e a categoria, nunca o texto).
+- **Automático**: escolha que eventos podem mudar o teclado (wallpaper, Colemak, modo de jogo, modos de tela, barra de volume e brilho). *Avisar mensagens no Espaço* liga o serviço que escuta as notificações (só o nome do app e a categoria, nunca o texto). *Reacender Caps e Win* liga o serviço que acende as duas teclas de novo depois do Caps Lock.
 - O botão **Sobre** (no topo) mostra o firmware do teclado.
 - **Desligar cenas** volta ao efeito que estava antes.
 
@@ -231,6 +233,8 @@ Os detalhes técnicos estão em [docs/PROTOCOL.md](docs/PROTOCOL.md).
 **O teclado para de responder depois de trocar de efeito**: em alguns sistemas, a outra interface USB do teclado (`36ae:feab`) trava. Adicione este parâmetro ao kernel e reinicie:
 `usbhid.quirks=0x36ae:0xfe9c:0x400`
 
+**Caps e Win ficam apagados no CustomLightning**: é o próprio teclado, que apaga as duas teclas quando o Caps Lock ou o Fn+Win desliga (as cores continuam guardadas). Confira se *Reacender Caps e Win* está ligado (`systemctl --user status openaurum-relight`); ele precisa do mesmo que o mapa de calor (abaixo). Depois do Fn+Win, ligue e desligue o Caps Lock: o Fn+Win não manda nada para o PC.
+
 **O mapa de calor não conta**: precisa do `python-evdev` e de o seu usuário estar no grupo `input`: `sudo usermod -aG input $USER`, e depois saia e entre de novo na sessão.
 
 **O app não abre (erro sobre `Adw` ou `Gtk`)**: sua distribuição precisa de GTK 4 e libadwaita 1.4+. Rode `./install.sh --check`. A linha de comando funciona mesmo sem eles.
@@ -270,7 +274,7 @@ openaurum/
   art.py           as cenas artísticas
   integrations.py  paleta, wallpaper, modo de tela, Não perturbe (config.conf / calOS)
   paths.py         onde cada arquivo de estado fica
-bin/               app (GTK 4), CLI, mapa de calor e aviso de mensagens
+bin/               app (GTK 4), CLI, mapa de calor, aviso de mensagens e reacender Caps/Win
 data/              regra udev, atalho, ícone e serviços
 docs/              protocolo e integração com o calOS
 ```
@@ -294,6 +298,7 @@ Contribuições são bem-vindas. Por favor, **não** envie pull requests com com
 - automatic overlays (Colemak-DH finger zones, game mode, typing heatmap)
 - Cave screen mode (dark red keyboard, restored afterwards)
 - alerts over a scene: a volume/brightness bar on the number row (`openaurum-cli bar volume 45`) and Space lit in the app's color when a message arrives (`openaurum-notify`, any notification daemon; app name and category only, never the text), with a daily write budget (`event_writes_per_day`)
+- Caps and Win lit again in CustomLightning: the firmware leaves both dark when Caps Lock or the Win lock (Fn+Win) goes off; `openaurum-relight` (on by default, needs python-evdev) rewrites those two keys with their stored colors after Caps Lock goes off. Fn+Win doesn't reach the PC: toggle Caps Lock after it
 
 **Install:** get Python 3 + PyGObject + GTK 4 + libadwaita ≥ 1.4 (see the table above), then `git clone https://github.com/its-danilo/openaurum.git && cd openaurum && ./install.sh`. Everything goes to `~/.local`. `sudo` is only used for a udev rule, which gives the logged-in user access to this one device. `./install.sh --uninstall` removes everything.
 

@@ -1,0 +1,11 @@
+[Unit]
+Description=OpenAurum: reacende Caps e Win depois que o Caps Lock desliga (só eventos de LED)
+PartOf=graphical-session.target
+
+[Service]
+ExecStart=%h/.local/bin/openaurum-relight
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=graphical-session.target

@@ -37,6 +37,7 @@ APP_ID = "io.github.its_danilo.OpenAurum"
 DEBOUNCE_MS = 120
 POLL_S = 2
 NOTIFY_UNIT = "openaurum-notify.service"
+RELIGHT_UNIT = "openaurum-relight.service"
 BLACK = "#000000"
 
 
@@ -955,6 +956,13 @@ class ScenesPage(Adw.PreferencesPage):
                      "(nada no Não perturbe; o texto nunca é lido)")
         self.messages.connect("notify::active", self.on_messages)
         auto.add(self.messages)
+        self.relight = Adw.SwitchRow(
+            title="Reacender Caps e Win",
+            subtitle="O próprio teclado apaga as duas quando o Caps Lock ou o Fn+Win desliga; "
+                     "isto as acende de novo depois do Caps Lock (2 gravações). "
+                     "Depois do Fn+Win, ligue e desligue o Caps Lock")
+        self.relight.connect("notify::active", self.on_relight)
+        auto.add(self.relight)
         self.add(auto)
 
         end = Adw.PreferencesGroup()
@@ -989,6 +997,7 @@ class ScenesPage(Adw.PreferencesPage):
             row.set_active(bool(st["auto"].get(key)))
         self.collect.set_active(self.service("is-enabled") == 0)
         self.messages.set_active(self.service("is-enabled", unit=NOTIFY_UNIT) == 0)
+        self.relight.set_active(self.service("is-enabled", unit=RELIGHT_UNIT) == 0)
         self.syncing = False
         self.stop_row.set_sensitive(st["active"] or bool(st["overlays"]))
         heat = scenes.load_heat()
@@ -1037,6 +1046,10 @@ class ScenesPage(Adw.PreferencesPage):
     def on_messages(self, row, _pspec):
         if not self.syncing:
             self.service("enable" if row.get_active() else "disable", "--now", unit=NOTIFY_UNIT)
+
+    def on_relight(self, row, _pspec):
+        if not self.syncing:
+            self.service("enable" if row.get_active() else "disable", "--now", unit=RELIGHT_UNIT)
 
     def on_collect(self, row, _pspec):
         if not self.syncing:
